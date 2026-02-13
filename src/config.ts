@@ -41,10 +41,10 @@ export function loadConfig(): BotConfig {
     moonbagTrailingStopPercent: envNum("MOONBAG_TRAILING_STOP_PERCENT", 50),
 
     maxTopHolderPercent: envNum("MAX_TOP_HOLDER_PERCENT", 50),
-    minUniqueHolders: envNum("MIN_UNIQUE_HOLDERS", 10),
+    minUniqueHolders: envNum("MIN_UNIQUE_HOLDERS", 5),
     requireMintRevoked: envBool("REQUIRE_MINT_REVOKED", true),
     requireFreezeRevoked: envBool("REQUIRE_FREEZE_REVOKED", true),
-    minTokenAgeSeconds: envNum("MIN_TOKEN_AGE_SECONDS", 30),
+    minTokenAgeSeconds: envNum("MIN_TOKEN_AGE_SECONDS", 10),
 
     kolWallets: envStr("KOL_WALLETS")
       .split(",")

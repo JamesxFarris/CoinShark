@@ -187,11 +187,14 @@ export class ScamFilter {
 
     // Use a relaxed concentration threshold for young tokens — pump.fun tokens
     // naturally start concentrated and spread out as they gain traction.
-    // Under 2 minutes old: allow up to 80%. After that: use config value (default 50%).
+    // Under 1 min: allow up to 95% (brand new, only a few holders expected).
+    // 1-3 min: allow up to 80%. After 3 min: use config value (default 50%).
     const tokenAgeSeconds = (Date.now() - history.createdAt) / 1000;
-    const effectiveMaxHolder = tokenAgeSeconds < 120
-      ? Math.max(this.config.maxTopHolderPercent, 80)
-      : this.config.maxTopHolderPercent;
+    const effectiveMaxHolder = tokenAgeSeconds < 60
+      ? 95
+      : tokenAgeSeconds < 180
+        ? Math.max(this.config.maxTopHolderPercent, 80)
+        : this.config.maxTopHolderPercent;
 
     if (topHolderConcentration > effectiveMaxHolder) {
       reasons.push(
@@ -226,7 +229,8 @@ export class ScamFilter {
     }
 
     // === Check 9: Creator initial supply grab ===
-    if (history.initialBuyPercent > 5) {
+    // On pump.fun, creators commonly buy 5-10% — only flag above 15%
+    if (history.initialBuyPercent > 15) {
       reasons.push(`Creator grabbed ${history.initialBuyPercent.toFixed(1)}% of supply at launch`);
     }
 
@@ -251,12 +255,17 @@ export class ScamFilter {
       (freezeAuthorityEnabled && this.config.requireFreezeRevoked) ||
       creatorIsSerial;
 
-    // Filter out soft reasons that should not hard-block on their own
-    const softReasons = new Set([
-      "Suspected wash trading detected (same wallets buying and selling)",
-      "Micro-buy swarming detected (many tiny buys to fake activity)",
-    ]);
-    const hardReasons = reasons.filter(r => !softReasons.has(r));
+    // Filter out soft reasons that should not hard-block on their own.
+    // Active tokens naturally have two-sided trading, concentrated early holders,
+    // and creators buying supply. Only truly disqualifying issues (authority, serial
+    // deployers) should hard-block.
+    const softPatterns = [
+      "Suspected wash trading",
+      "Micro-buy swarming",
+      "Creator grabbed",
+      "unique buyers",
+    ];
+    const hardReasons = reasons.filter(r => !softPatterns.some(p => r.includes(p)));
     const passed = !hardFail && hardReasons.length === 0;
 
     return {
@@ -419,9 +428,10 @@ export class ScamFilter {
     }
 
     // Suspiciously large initial buy (creator grabbing supply)
+    // On pump.fun, 5-15% is normal. Only instant-reject above 25%.
     if (token.initialBuy > 0 && token.marketCapSol > 0) {
       const creatorPercent = (token.initialBuy / token.vTokensInBondingCurve) * 100;
-      if (creatorPercent > 10) {
+      if (creatorPercent > 25) {
         return `Creator grabbed ${creatorPercent.toFixed(1)}% of supply at launch`;
       }
     }
