@@ -375,6 +375,26 @@ export class ScamFilter {
     return false;
   }
 
+  // Common scam keywords in token names/symbols
+  private static readonly SCAM_KEYWORDS = [
+    "airdrop", "free", "claim", "presale", "whitelist",
+    "guaranteed", "1000x", "moonshot", "safu", "based dev",
+    "renounced", "locked", "anti-rug", "stealth launch",
+    "doxxed", "audit", "certik",
+  ];
+
+  // Tokens that impersonate major assets
+  private static readonly IMPERSONATION_NAMES = [
+    "solana", "bitcoin", "ethereum", "bnb", "tether", "usdc", "usdt",
+    "cardano", "dogecoin", "shiba", "pepe", "bonk", "wif",
+    "jupiter", "raydium", "marinade", "jito", "pyth", "tensor",
+  ];
+
+  private static readonly IMPERSONATION_SYMBOLS = [
+    "SOL", "BTC", "ETH", "BNB", "USDC", "USDT", "ADA",
+    "DOGE", "SHIB", "PEPE", "BONK", "WIF", "JUP", "RAY", "JTO",
+  ];
+
   /**
    * Quick pre-check before full analysis (fast rejection)
    */
@@ -390,6 +410,40 @@ export class ScamFilter {
       if (creatorPercent > 10) {
         return `Creator grabbed ${creatorPercent.toFixed(1)}% of supply at launch`;
       }
+    }
+
+    // === Metadata red flags ===
+
+    // Missing metadata URI (no image/description = likely throwaway scam)
+    if (!token.uri || token.uri.trim() === "") {
+      return "No metadata URI — likely throwaway token";
+    }
+
+    const nameLower = token.name.toLowerCase().trim();
+    const symbolUpper = token.symbol.toUpperCase().trim();
+
+    // Scam keywords in token name
+    for (const keyword of ScamFilter.SCAM_KEYWORDS) {
+      if (nameLower.includes(keyword)) {
+        return `Scam keyword in name: "${keyword}"`;
+      }
+    }
+
+    // Impersonation detection — exact symbol match with major tokens
+    if (ScamFilter.IMPERSONATION_SYMBOLS.includes(symbolUpper)) {
+      return `Impersonates ${symbolUpper} — exact symbol match`;
+    }
+
+    // Impersonation detection — name contains major project name
+    for (const name of ScamFilter.IMPERSONATION_NAMES) {
+      if (nameLower === name || nameLower.startsWith(name + " ") || nameLower.endsWith(" " + name)) {
+        return `Impersonates ${name} — name match`;
+      }
+    }
+
+    // Empty or single-char names are suspicious
+    if (token.name.trim().length <= 1 || token.symbol.trim().length === 0) {
+      return "Empty or single-char token name/symbol";
     }
 
     return null;

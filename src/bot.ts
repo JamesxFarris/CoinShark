@@ -1,4 +1,4 @@
-import { BotConfig, PumpPortalNewToken, PumpPortalTrade, Position } from "./types";
+import { BotConfig, PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration, Position } from "./types";
 import { WalletManager } from "./wallet";
 import { TokenScanner } from "./scanner";
 import { ScamFilter } from "./scamFilter";
@@ -104,6 +104,9 @@ export class CoinSharkBot {
     this.scanner.on("trade", (trade: PumpPortalTrade) =>
       this.onTrade(trade)
     );
+    this.scanner.on("migration", (migration: PumpPortalMigration) =>
+      this.onMigration(migration)
+    );
     this.scanner.on("fatal", (err: Error) => {
       log.error(`Fatal scanner error: ${err.message}`);
       this.stop();
@@ -175,9 +178,40 @@ export class CoinSharkBot {
     this.scanner.watchToken(token.mint);
     this.stats.tokensWatched++;
 
+    // Watch the creator's wallet so we detect if they sell
+    if (token.traderPublicKey) {
+      this.scanner.watchAccount(token.traderPublicKey);
+    }
+
     log.info(
       `NEW: ${token.symbol} (${token.name}) | MCap: ${token.marketCapSol.toFixed(2)} SOL | ${token.mint.slice(0, 8)}...`
     );
+  }
+
+  /**
+   * Handle a token migration (bonding curve graduation to PumpSwap/Raydium)
+   */
+  private onMigration(migration: PumpPortalMigration) {
+    this.signalEngine.markGraduated(migration.mint);
+    const symbol = this.tokenSymbols.get(migration.mint) ?? migration.mint.slice(0, 8);
+    log.info(
+      `GRADUATED: ${symbol} → Pool: ${migration.pool.slice(0, 8)}... | MCap: ${migration.marketCapSol.toFixed(2)} SOL`
+    );
+
+    // If we have a position, this is good news (token survived to graduation)
+    if (this.riskManager.hasPosition(migration.mint)) {
+      log.signal(`${symbol}: Token graduated while we hold a position — bullish!`);
+      if (this.telegram) {
+        this.telegram.send(
+          `<b>🎓 ${symbol} graduated!</b>\nMCap: ${migration.marketCapSol.toFixed(2)} SOL\nPool: <code>${migration.pool.slice(0, 16)}...</code>`
+        );
+      }
+    }
+
+    // Unwatch tokens we don't hold positions in after graduation (saves bandwidth)
+    if (!this.riskManager.hasPosition(migration.mint)) {
+      this.unwatchToken(migration.mint);
+    }
   }
 
   /**
@@ -263,6 +297,9 @@ export class CoinSharkBot {
       ? ((exitMarketCapSol - position.entryMarketCapSol) / position.entryMarketCapSol) * 100
       : 0;
     const pnlSol = position.solInvested * (pnlPercent / 100);
+
+    // Record outcome for alpha wallet discovery (first-buyer tracking)
+    this.signalEngine.recordOutcome(position.mint, pnlPercent > 0);
 
     // Update KOL scores based on trade outcome
     for (const signal of position.signals) {
@@ -433,6 +470,10 @@ export class CoinSharkBot {
       log.info(`  Win rate: ${historyStats.winRate.toFixed(1)}% (${historyStats.wins}W/${historyStats.losses}L)`);
       log.info(`  Total PnL: ${historyStats.totalPnlSol >= 0 ? "+" : ""}${historyStats.totalPnlSol.toFixed(4)} SOL`);
       log.info(`  Today PnL: ${historyStats.dailyPnlSol >= 0 ? "+" : ""}${historyStats.dailyPnlSol.toFixed(4)} SOL`);
+    }
+    const alphaCount = this.signalEngine.getAlphaWalletCount();
+    if (alphaCount > 0) {
+      log.info(`  Alpha wallets discovered: ${alphaCount}`);
     }
     log.info(`  Auto-trading: ${this.autoTradingEnabled ? "ON" : "PAUSED"}`);
   }

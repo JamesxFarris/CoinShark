@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { EventEmitter } from "events";
-import { PumpPortalNewToken, PumpPortalTrade } from "./types";
+import { PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration } from "./types";
 import { log } from "./logger";
 
 const PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data";
@@ -10,6 +10,13 @@ const PUMPPORTAL_WS_URL = "wss://pumpportal.fun/api/data";
  * - New token creations on Pump.fun
  * - Trades on tokens we're watching
  * - Trades by KOL wallets we're tracking
+ * - Token migrations (bonding curve graduation to PumpSwap/Raydium)
+ *
+ * Events emitted:
+ * - "newToken" (PumpPortalNewToken)
+ * - "trade" (PumpPortalTrade)
+ * - "migration" (PumpPortalMigration)
+ * - "fatal" (Error)
  */
 export class TokenScanner extends EventEmitter {
   private ws: WebSocket | null = null;
@@ -28,8 +35,9 @@ export class TokenScanner extends EventEmitter {
       this.isConnected = true;
       this.reconnectAttempts = 0;
 
-      // Subscribe to new token creations
+      // Subscribe to new token creations and migrations
       this.send({ method: "subscribeNewToken" });
+      this.send({ method: "subscribeMigration" });
 
       // Re-subscribe to any tokens/accounts from before reconnect
       for (const mint of this.subscribedTokens) {
@@ -100,6 +108,16 @@ export class TokenScanner extends EventEmitter {
     }
   }
 
+  /**
+   * Unsubscribe from an account
+   */
+  unwatchAccount(account: string) {
+    this.subscribedAccounts.delete(account);
+    if (this.isConnected) {
+      this.send({ method: "unsubscribeAccountTrade", keys: [account] });
+    }
+  }
+
   private send(msg: object) {
     if (this.ws && this.isConnected) {
       this.ws.send(JSON.stringify(msg));
@@ -123,6 +141,19 @@ export class TokenScanner extends EventEmitter {
         uri: msg.uri ?? "",
       };
       this.emit("newToken", token);
+      return;
+    }
+
+    // Migration event (bonding curve graduation)
+    if (msg.mint && msg.pool && !msg.txType) {
+      const migration: PumpPortalMigration = {
+        signature: msg.signature ?? "",
+        mint: msg.mint,
+        bondingCurveKey: msg.bondingCurveKey ?? "",
+        pool: msg.pool ?? "",
+        marketCapSol: msg.marketCapSol ?? 0,
+      };
+      this.emit("migration", migration);
       return;
     }
 

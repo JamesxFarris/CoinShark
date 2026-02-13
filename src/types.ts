@@ -57,7 +57,25 @@ export interface HolderInfo {
 
 // === Signal Engine ===
 
-export type SignalType = "kol_buy" | "volume_spike" | "momentum" | "trend" | "bonding_curve";
+export type SignalType =
+  | "kol_buy"
+  | "volume_spike"
+  | "momentum"
+  | "trend"
+  | "bonding_curve"
+  | "holder_velocity"
+  | "coordinated_sell"
+  | "creator_sell"
+  | "graduation"
+  | "alpha_wallet";
+
+export interface PumpPortalMigration {
+  signature: string;
+  mint: string;
+  bondingCurveKey: string;
+  pool: string; // PumpSwap/Raydium pool address
+  marketCapSol: number;
+}
 
 export interface Signal {
   type: SignalType;

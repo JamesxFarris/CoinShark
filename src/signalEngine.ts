@@ -10,6 +10,7 @@ import { KolDiscovery } from "./kolDiscovery";
 import { log } from "./logger";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const ONE_MINUTE_MS = 60 * 1000;
 const TOTAL_BONDING_CURVE_TOKENS = 800_000_000;
 
 interface TradeRecord {
@@ -21,17 +22,29 @@ interface TradeRecord {
   timestamp: number;
 }
 
+interface HolderSnapshot {
+  timestamp: number;
+  uniqueHolders: number;
+}
+
 interface TokenState {
   mint: string;
   symbol: string;
   name: string;
+  creator: string;
   createdAt: number;
   trades: TradeRecord[];
   currentMarketCapSol: number;
   marketCapAtFirstSeen: number;
   kolBuys: Set<string>;
   bondingCurvePercent: number;
+  previousBondingCurvePercent: number;
+  bondingCurveSnapshotTime: number;
   vTokensInBondingCurve: number;
+  graduated: boolean;
+  creatorSold: boolean;
+  holderSnapshots: HolderSnapshot[];
+  allUniqueBuyers: Set<string>;
 }
 
 /**
@@ -43,11 +56,19 @@ interface TokenState {
  * - momentum: Buy/sell ratio and unique buyer count indicate organic growth
  * - trend: Market cap is growing steadily without sudden spikes (healthier)
  * - bonding_curve: Token is approaching graduation (high demand)
+ * - holder_velocity: Rate of new unique holders is accelerating
+ * - coordinated_sell: Multiple wallets dumping simultaneously (exit signal)
+ * - creator_sell: Creator wallet is selling (exit signal)
+ * - graduation: Token graduated from bonding curve
+ * - alpha_wallet: A wallet discovered via first-buyer tracking bought
  */
 export class SignalEngine {
   private config: BotConfig;
   private kolDiscovery: KolDiscovery;
   private tokenStates: Map<string, TokenState> = new Map();
+
+  /** Wallets auto-discovered as consistently early in winning tokens */
+  private alphaWallets: Map<string, { hits: number; misses: number; lastSeen: number }> = new Map();
 
   constructor(config: BotConfig, kolDiscovery: KolDiscovery) {
     this.config = config;
@@ -63,13 +84,20 @@ export class SignalEngine {
       mint: token.mint,
       symbol: token.symbol,
       name: token.name,
+      creator: token.traderPublicKey,
       createdAt: Date.now(),
       trades: [],
       currentMarketCapSol: token.marketCapSol,
       marketCapAtFirstSeen: token.marketCapSol,
       kolBuys: new Set(),
       bondingCurvePercent,
+      previousBondingCurvePercent: bondingCurvePercent,
+      bondingCurveSnapshotTime: Date.now(),
       vTokensInBondingCurve: token.vTokensInBondingCurve,
+      graduated: false,
+      creatorSold: false,
+      holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
+      allUniqueBuyers: new Set(),
     });
   }
 
@@ -84,6 +112,31 @@ export class SignalEngine {
   }
 
   /**
+   * Mark a token as graduated (called from bot.ts when migration event fires)
+   */
+  markGraduated(mint: string) {
+    const state = this.tokenStates.get(mint);
+    if (state) {
+      state.graduated = true;
+      state.bondingCurvePercent = 100;
+    }
+  }
+
+  /**
+   * Get the creator wallet for a token (for monitoring)
+   */
+  getCreator(mint: string): string | null {
+    return this.tokenStates.get(mint)?.creator ?? null;
+  }
+
+  /**
+   * Check if creator has sold
+   */
+  hasCreatorSold(mint: string): boolean {
+    return this.tokenStates.get(mint)?.creatorSold ?? false;
+  }
+
+  /**
    * Record a trade and check if it generates any signals
    */
   processTrade(trade: PumpPortalTrade): Signal[] {
@@ -93,20 +146,48 @@ export class SignalEngine {
         mint: trade.mint,
         symbol: "???",
         name: "Unknown",
+        creator: "",
         createdAt: Date.now(),
         trades: [],
         currentMarketCapSol: trade.marketCapSol,
         marketCapAtFirstSeen: trade.marketCapSol,
         kolBuys: new Set(),
         bondingCurvePercent: this.calculateBondingCurvePercent(trade.vTokensInBondingCurve),
+        previousBondingCurvePercent: 0,
+        bondingCurveSnapshotTime: Date.now(),
         vTokensInBondingCurve: trade.vTokensInBondingCurve,
+        graduated: false,
+        creatorSold: false,
+        holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
+        allUniqueBuyers: new Set(),
       };
       this.tokenStates.set(trade.mint, state);
+    }
+
+    // Snapshot bonding curve for velocity calculation (every 60s)
+    const now = Date.now();
+    if (now - state.bondingCurveSnapshotTime >= ONE_MINUTE_MS) {
+      state.previousBondingCurvePercent = state.bondingCurvePercent;
+      state.bondingCurveSnapshotTime = now;
     }
 
     // Update bonding curve progress
     state.vTokensInBondingCurve = trade.vTokensInBondingCurve;
     state.bondingCurvePercent = this.calculateBondingCurvePercent(trade.vTokensInBondingCurve);
+
+    // Track unique buyers for holder velocity
+    if (trade.txType === "buy") {
+      state.allUniqueBuyers.add(trade.traderPublicKey);
+      // Take holder snapshots every minute
+      const lastSnapshot = state.holderSnapshots[state.holderSnapshots.length - 1];
+      if (now - lastSnapshot.timestamp >= ONE_MINUTE_MS) {
+        state.holderSnapshots.push({ timestamp: now, uniqueHolders: state.allUniqueBuyers.size });
+        // Keep only last 15 minutes of snapshots
+        if (state.holderSnapshots.length > 15) {
+          state.holderSnapshots.shift();
+        }
+      }
+    }
 
     // Record the trade
     state.trades.push({
@@ -115,36 +196,87 @@ export class SignalEngine {
       solAmount: trade.solAmount,
       tokenAmount: trade.tokenAmount,
       marketCapSol: trade.marketCapSol,
-      timestamp: Date.now(),
+      timestamp: now,
     });
     state.currentMarketCapSol = trade.marketCapSol;
 
     // Trim old trades to save memory (keep last 30 min)
-    const cutoff = Date.now() - 30 * 60 * 1000;
+    const cutoff = now - 30 * 60 * 1000;
     state.trades = state.trades.filter((t) => t.timestamp > cutoff);
 
     // Check for signals
     const signals: Signal[] = [];
 
-    // KOL buy signal (with performance-weighted strength)
+    // === Creator sell detection ===
+    if (trade.txType === "sell" && trade.traderPublicKey === state.creator && !state.creatorSold) {
+      state.creatorSold = true;
+      signals.push({
+        type: "creator_sell",
+        mint: trade.mint,
+        strength: 90,
+        details: `Creator ${state.creator.slice(0, 8)}... sold ${trade.solAmount.toFixed(2)} SOL`,
+        timestamp: now,
+      });
+      log.scam(`${state.symbol}: CREATOR SELLING — ${trade.solAmount.toFixed(2)} SOL`);
+    }
+
+    // === KOL buy signal (with performance-weighted strength) ===
     if (trade.txType === "buy" && this.kolDiscovery.isKol(trade.traderPublicKey)) {
       state.kolBuys.add(trade.traderPublicKey);
       const kolWeight = this.kolDiscovery.getKolWeight(trade.traderPublicKey);
       const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
       const baseStrength = Math.min(100, state.kolBuys.size * 40);
-      const signal: Signal = {
+      signals.push({
         type: "kol_buy",
         mint: trade.mint,
         strength: Math.min(100, Math.round(baseStrength * kolWeight)),
         details: `KOL ${kol?.alias ?? trade.traderPublicKey.slice(0, 8)}... bought ${trade.solAmount.toFixed(2)} SOL (score: ${kol?.score ?? "??"})`,
-        timestamp: Date.now(),
-      };
-      signals.push(signal);
-      this.kolDiscovery.getKol(trade.traderPublicKey)!.lastActive = Date.now();
+        timestamp: now,
+      });
+      this.kolDiscovery.getKol(trade.traderPublicKey)!.lastActive = now;
       this.kolDiscovery.save();
       log.kol(
         `${state.symbol}: KOL buy — ${kol?.alias ?? trade.traderPublicKey.slice(0, 8)}... (${trade.solAmount.toFixed(2)} SOL, weight: ${kolWeight.toFixed(1)}x)`
       );
+    }
+
+    // === Alpha wallet signal (auto-discovered wallets) ===
+    if (trade.txType === "buy") {
+      const alpha = this.alphaWallets.get(trade.traderPublicKey);
+      if (alpha && alpha.hits >= 3) {
+        const hitRate = alpha.hits / (alpha.hits + alpha.misses);
+        if (hitRate >= 0.3) {
+          signals.push({
+            type: "alpha_wallet",
+            mint: trade.mint,
+            strength: Math.min(100, Math.round(hitRate * 80)),
+            details: `Auto-discovered alpha wallet (${alpha.hits} hits, ${(hitRate * 100).toFixed(0)}% rate)`,
+            timestamp: now,
+          });
+          log.signal(`${state.symbol}: Alpha wallet buy — ${trade.traderPublicKey.slice(0, 8)}... (${alpha.hits} hits)`);
+        }
+      }
+    }
+
+    // === Coordinated sell detection ===
+    const recentSells = state.trades.filter(
+      (t) => t.action === "sell" && now - t.timestamp < 10_000
+    );
+    const uniqueRecentSellers = new Set(recentSells.map((t) => t.trader));
+    const recentSellVolume = recentSells.reduce((s, t) => s + t.solAmount, 0);
+    const recent1mBuyVolume = state.trades
+      .filter((t) => t.action === "buy" && now - t.timestamp < ONE_MINUTE_MS)
+      .reduce((s, t) => s + t.solAmount, 0);
+
+    if (uniqueRecentSellers.size >= 3 && recentSellVolume > recent1mBuyVolume * 0.5) {
+      signals.push({
+        type: "coordinated_sell",
+        mint: trade.mint,
+        strength: Math.min(100, uniqueRecentSellers.size * 20),
+        details: `${uniqueRecentSellers.size} wallets sold ${recentSellVolume.toFixed(2)} SOL in 10s`,
+        timestamp: now,
+      });
+      log.signal(`${state.symbol}: COORDINATED SELL — ${uniqueRecentSellers.size} wallets, ${recentSellVolume.toFixed(2)} SOL`);
     }
 
     return signals;
@@ -252,45 +384,109 @@ export class SignalEngine {
       });
     }
 
-    // Bonding curve signal — tokens with good progress are in demand
+    // Bonding curve signal — weight tokens approaching graduation more heavily
     if (
       state.bondingCurvePercent >= this.config.minBondingCurvePercent &&
       state.bondingCurvePercent <= this.config.maxBondingCurvePercent
     ) {
-      // Tokens at 40-70% are the sweet spot (strong demand, not yet graduated)
-      const distFromOptimal = Math.abs(state.bondingCurvePercent - 55);
-      const strength = Math.min(100, Math.max(20, 80 - distFromOptimal));
+      // Sweet spot shifted to 50-80% (approaching graduation = strong demand)
+      let strength: number;
+      if (state.bondingCurvePercent >= 50 && state.bondingCurvePercent <= 80) {
+        strength = 70 + (state.bondingCurvePercent - 50); // 70-100
+      } else {
+        const distFromOptimal = Math.min(
+          Math.abs(state.bondingCurvePercent - 50),
+          Math.abs(state.bondingCurvePercent - 80)
+        );
+        strength = Math.max(20, 70 - distFromOptimal * 2);
+      }
       signals.push({
         type: "bonding_curve",
         mint,
-        strength,
+        strength: Math.min(100, strength),
         details: `Bonding curve: ${state.bondingCurvePercent.toFixed(1)}% complete`,
         timestamp: now,
       });
     }
 
-    // Aggregate score
+    // === Bonding curve velocity signal ===
+    if (state.bondingCurveSnapshotTime > state.createdAt) {
+      const bcVelocity = state.bondingCurvePercent - state.previousBondingCurvePercent;
+      if (bcVelocity > 5) {
+        // Curve filled 5%+ in the last minute = high demand
+        const strength = Math.min(100, bcVelocity * 10);
+        signals.push({
+          type: "bonding_curve",
+          mint,
+          strength,
+          details: `Curve velocity: +${bcVelocity.toFixed(1)}%/min (rapid filling)`,
+          timestamp: now,
+        });
+      }
+    }
+
+    // === Holder velocity signal ===
+    if (state.holderSnapshots.length >= 2) {
+      const latest = state.holderSnapshots[state.holderSnapshots.length - 1];
+      // Compare to 3 minutes ago (or earliest available)
+      const compareIdx = Math.max(0, state.holderSnapshots.length - 4);
+      const earlier = state.holderSnapshots[compareIdx];
+      const timeDiffMin = (latest.timestamp - earlier.timestamp) / ONE_MINUTE_MS;
+
+      if (timeDiffMin > 0) {
+        const newHoldersPerMin = (latest.uniqueHolders - earlier.uniqueHolders) / timeDiffMin;
+
+        if (newHoldersPerMin >= 3) {
+          // 3+ new holders per minute = strong organic growth
+          const strength = Math.min(100, newHoldersPerMin * 10);
+          signals.push({
+            type: "holder_velocity",
+            mint,
+            strength,
+            details: `${newHoldersPerMin.toFixed(1)} new holders/min (${latest.uniqueHolders} total)`,
+            timestamp: now,
+          });
+        }
+      }
+    }
+
+    // Aggregate score with updated weights
     let aggregateScore = 0;
     for (const signal of signals) {
       switch (signal.type) {
         case "kol_buy":
-          aggregateScore += signal.strength * 0.30;
+          aggregateScore += signal.strength * 0.25;
           break;
         case "volume_spike":
-          aggregateScore += signal.strength * 0.20;
+          aggregateScore += signal.strength * 0.15;
           break;
         case "momentum":
-          aggregateScore += signal.strength * 0.20;
+          aggregateScore += signal.strength * 0.15;
           break;
         case "trend":
-          aggregateScore += signal.strength * 0.15;
+          aggregateScore += signal.strength * 0.10;
           break;
         case "bonding_curve":
+          aggregateScore += signal.strength * 0.10;
+          break;
+        case "holder_velocity":
           aggregateScore += signal.strength * 0.15;
+          break;
+        case "alpha_wallet":
+          aggregateScore += signal.strength * 0.10;
+          break;
+        // Negative signals reduce score
+        case "coordinated_sell":
+          aggregateScore -= signal.strength * 0.30;
+          break;
+        case "creator_sell":
+          aggregateScore -= signal.strength * 0.50;
+          break;
+        default:
           break;
       }
     }
-    aggregateScore = Math.min(100, aggregateScore);
+    aggregateScore = Math.max(0, Math.min(100, aggregateScore));
 
     // Market cap bounds check
     if (
@@ -305,6 +501,11 @@ export class SignalEngine {
       state.bondingCurvePercent < this.config.minBondingCurvePercent ||
       state.bondingCurvePercent > this.config.maxBondingCurvePercent
     ) {
+      aggregateScore = 0;
+    }
+
+    // Creator sold = hard zero (do not buy tokens where creator dumped)
+    if (state.creatorSold) {
       aggregateScore = 0;
     }
 
@@ -364,6 +565,66 @@ export class SignalEngine {
       momentum,
       reason: `Score: ${momentum.aggregateScore}, signals: ${momentum.signals.map((s) => s.type).join(", ")}`,
     };
+  }
+
+  /**
+   * Record trade outcome for first-buyer tracking (auto wallet discovery).
+   * Called when a position closes to record which early buyers were in winning tokens.
+   */
+  recordOutcome(mint: string, profitable: boolean) {
+    const state = this.tokenStates.get(mint);
+    if (!state) return;
+
+    // Get the first 20 buyers of this token
+    const earlyBuyers = new Set<string>();
+    for (const trade of state.trades) {
+      if (trade.action === "buy") {
+        earlyBuyers.add(trade.trader);
+        if (earlyBuyers.size >= 20) break;
+      }
+    }
+
+    // Update alpha wallet scores
+    for (const wallet of earlyBuyers) {
+      // Skip known KOLs (they're already tracked)
+      if (this.kolDiscovery.isKol(wallet)) continue;
+      // Skip the creator
+      if (wallet === state.creator) continue;
+
+      let profile = this.alphaWallets.get(wallet);
+      if (!profile) {
+        profile = { hits: 0, misses: 0, lastSeen: Date.now() };
+        this.alphaWallets.set(wallet, profile);
+      }
+
+      if (profitable) {
+        profile.hits++;
+      } else {
+        profile.misses++;
+      }
+      profile.lastSeen = Date.now();
+    }
+
+    // Prune alpha wallets that haven't been seen in 7 days
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    for (const [addr, profile] of this.alphaWallets) {
+      if (profile.lastSeen < weekAgo) {
+        this.alphaWallets.delete(addr);
+      }
+    }
+  }
+
+  /**
+   * Get count of auto-discovered alpha wallets
+   */
+  getAlphaWalletCount(): number {
+    let count = 0;
+    for (const [, profile] of this.alphaWallets) {
+      if (profile.hits >= 3 && profile.hits / (profile.hits + profile.misses) >= 0.3) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /**
