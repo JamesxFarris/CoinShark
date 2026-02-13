@@ -107,8 +107,7 @@ src/
    - `SOLANA_RPC_URL` (your Helius RPC URL)
    - `PUMPPORTAL_API_KEY`
    - `KOL_WALLETS` (comma-separated)
-6. Railway sets `PORT` automatically — the health check will just work
-7. Click **Deploy** — the bot will build, start, and stay running 24/7
+6. Click **Deploy** — the bot will build, start, and stay running 24/7
 
 Railway's Hobby plan includes **$5 of free usage/month** (~500 CPU-hours), which is more than enough for this bot.
 
