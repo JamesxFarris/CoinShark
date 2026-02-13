@@ -185,9 +185,17 @@ export class ScamFilter {
       topHolderConcentration = 100; // Assume worst case
     }
 
-    if (topHolderConcentration > this.config.maxTopHolderPercent) {
+    // Use a relaxed concentration threshold for young tokens — pump.fun tokens
+    // naturally start concentrated and spread out as they gain traction.
+    // Under 2 minutes old: allow up to 80%. After that: use config value (default 50%).
+    const tokenAgeSeconds = (Date.now() - history.createdAt) / 1000;
+    const effectiveMaxHolder = tokenAgeSeconds < 120
+      ? Math.max(this.config.maxTopHolderPercent, 80)
+      : this.config.maxTopHolderPercent;
+
+    if (topHolderConcentration > effectiveMaxHolder) {
       reasons.push(
-        `Top 5 holders own ${topHolderConcentration.toFixed(1)}% (max: ${this.config.maxTopHolderPercent}%)`
+        `Top 5 holders own ${topHolderConcentration.toFixed(1)}% (max: ${effectiveMaxHolder}%)`
       );
     }
 
@@ -235,13 +243,21 @@ export class ScamFilter {
     if (lowUniqueHolders) overallSafety -= 15;
     overallSafety = Math.max(0, Math.min(100, overallSafety));
 
-    // A token with any of the authority flags still on is an auto-fail
+    // Hard fail = only truly disqualifying issues (authority abuse, serial deployers)
+    // Soft flags (wash trading, micro-buys, holder concentration) just lower the score
+    // but don't outright block — active tokens naturally have two-sided activity.
     const hardFail =
       (mintAuthorityEnabled && this.config.requireMintRevoked) ||
       (freezeAuthorityEnabled && this.config.requireFreezeRevoked) ||
       creatorIsSerial;
 
-    const passed = !hardFail && reasons.length === 0;
+    // Filter out soft reasons that should not hard-block on their own
+    const softReasons = new Set([
+      "Suspected wash trading detected (same wallets buying and selling)",
+      "Micro-buy swarming detected (many tiny buys to fake activity)",
+    ]);
+    const hardReasons = reasons.filter(r => !softReasons.has(r));
+    const passed = !hardFail && hardReasons.length === 0;
 
     return {
       mint,
@@ -266,11 +282,16 @@ export class ScamFilter {
   }
 
   /**
-   * Detect wash trading: same wallets appearing on both buy and sell sides
+   * Detect wash trading: same wallets appearing on both buy and sell sides.
+   * Relaxed: on active tokens, some buy/sell overlap is NORMAL (profit-taking).
+   * Only flag when there's overwhelming overlap from very few wallets.
    */
   private detectWashTrading(history: TokenTradeHistory): boolean {
     const buyerSet = history.uniqueBuyers;
     const sellerSet = history.uniqueSellers;
+
+    // Need a meaningful sample — don't flag tiny token pools
+    if (buyerSet.size < 8) return false;
 
     // Count wallets that both bought and sold
     let overlapCount = 0;
@@ -278,21 +299,25 @@ export class ScamFilter {
       if (sellerSet.has(buyer)) overlapCount++;
     }
 
-    // If more than 30% of buyers are also sellers, suspicious
-    if (buyerSet.size > 3 && overlapCount / buyerSet.size > 0.3) {
+    // If more than 60% of buyers are also sellers, suspicious
+    // (30% was too aggressive — normal tokens have profit-takers)
+    if (overlapCount / buyerSet.size > 0.6) {
       return true;
     }
 
     // Check for repeated small trades of identical amounts (volume bot pattern)
+    // Require 15+ identical trades (10 was too sensitive for common amounts like 0.1 SOL)
     const recentTrades = history.trades.slice(-50);
     const amountCounts = new Map<string, number>();
     for (const trade of recentTrades) {
-      const key = trade.solAmount.toFixed(6);
-      amountCounts.set(key, (amountCounts.get(key) ?? 0) + 1);
+      // Only flag micro-amounts (<0.05 SOL) — normal traders can have similar amounts
+      if (trade.solAmount < 0.05) {
+        const key = trade.solAmount.toFixed(6);
+        amountCounts.set(key, (amountCounts.get(key) ?? 0) + 1);
+      }
     }
-    for (const [amount, count] of amountCounts) {
-      if (count >= 10) {
-        // 10+ trades of the exact same amount = likely bot
+    for (const [, count] of amountCounts) {
+      if (count >= 15) {
         return true;
       }
     }
@@ -332,11 +357,12 @@ export class ScamFilter {
       }
     }
 
-    // Also flag if creator wallet bought alongside other wallets
+    // Creator buying at launch is normal on pump.fun — only flag if creator
+    // bought alongside many other wallets with suspiciously similar amounts
     const creatorBoughtAtLaunch = launchTrades.some(
       (t) => t.trader === history.creatorWallet
     );
-    if (creatorBoughtAtLaunch && uniqueLaunchBuyers.size >= 3) {
+    if (creatorBoughtAtLaunch && uniqueLaunchBuyers.size >= 6) {
       return true;
     }
 
@@ -344,32 +370,20 @@ export class ScamFilter {
   }
 
   /**
-   * Detect micro-buy swarming: many tiny buys (< 0.01 SOL) from different wallets
+   * Detect micro-buy swarming: many tiny buys (< 0.005 SOL) from different wallets
    * to simulate organic activity. Common bot pattern.
+   * Relaxed from <0.01 to <0.005 — many real users buy tiny amounts on pump.fun.
    */
   private detectMicroBuySwarming(history: TokenTradeHistory): boolean {
     const recentBuys = history.trades.filter(t => t.action === "buy");
-    if (recentBuys.length < 10) return false;
+    if (recentBuys.length < 15) return false;
 
-    const microBuys = recentBuys.filter(t => t.solAmount < 0.01);
+    const microBuys = recentBuys.filter(t => t.solAmount < 0.005);
     const microBuyWallets = new Set(microBuys.map(t => t.trader));
 
-    // If >50% of buys are micro-buys from many different wallets, it's suspicious
-    if (microBuys.length > recentBuys.length * 0.5 && microBuyWallets.size >= 8) {
+    // If >70% of buys are micro-buys from 12+ different wallets, it's suspicious
+    if (microBuys.length > recentBuys.length * 0.7 && microBuyWallets.size >= 12) {
       return true;
-    }
-
-    // Also check for rapid-fire buys (>20 buys in 30 seconds from different wallets)
-    if (recentBuys.length >= 20) {
-      const sorted = [...recentBuys].sort((a, b) => a.timestamp - b.timestamp);
-      for (let i = 0; i <= sorted.length - 20; i++) {
-        const window = sorted.slice(i, i + 20);
-        const timeSpan = window[window.length - 1].timestamp - window[0].timestamp;
-        const uniqueTraders = new Set(window.map(t => t.trader)).size;
-        if (timeSpan < 30_000 && uniqueTraders >= 15) {
-          return true;
-        }
-      }
     }
 
     return false;

@@ -65,19 +65,19 @@ export class TelegramUI {
    */
   async alertBuy(symbol: string, mint: string, solAmount: number, marketCapSol: number, signals: string[]) {
     const msg = [
-      `<b>BUY ${symbol}</b>`,
-      `Mint: <code>${mint.slice(0, 12)}...</code>`,
-      `Amount: ${solAmount} SOL`,
-      `MCap: ${marketCapSol.toFixed(2)} SOL`,
-      `Signals: ${signals.join(", ")}`,
+      `\ud83d\udfe2 <b>BUY ${symbol}</b>`,
+      `\ud83c\udfab Mint: <code>${mint.slice(0, 12)}...</code>`,
+      `\ud83d\udcb5 Amount: ${solAmount} SOL`,
+      `\ud83d\udcca MCap: ${marketCapSol.toFixed(2)} SOL`,
+      `\u26a1 Signals: ${signals.join(", ")}`,
     ].join("\n");
     try {
       await this.bot.sendMessage(this.chatId, msg, {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [[
-            { text: "Sell Now", callback_data: `sell:${mint}` },
-            { text: "Positions", callback_data: "positions" },
+            { text: "\ud83d\udcb8 Sell Now", callback_data: `sell:${mint}` },
+            { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
           ]],
         },
       });
@@ -90,19 +90,20 @@ export class TelegramUI {
    * Send sell alert
    */
   async alertSell(symbol: string, pnlPercent: number, pnlSol: number, reason: string) {
-    const emoji = pnlPercent >= 0 ? "+" : "";
+    const sign = pnlPercent >= 0 ? "+" : "";
+    const pnlEmoji = pnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
     const msg = [
-      `<b>SELL ${symbol}</b>`,
-      `PnL: ${emoji}${pnlPercent.toFixed(1)}% (${emoji}${pnlSol.toFixed(4)} SOL)`,
-      `Reason: ${reason}`,
+      `\ud83d\udcb8 <b>SELL ${symbol}</b>`,
+      `${pnlEmoji} PnL: <b>${sign}${pnlPercent.toFixed(1)}%</b> (${sign}${pnlSol.toFixed(4)} SOL)`,
+      `\ud83d\udccc Reason: ${reason}`,
     ].join("\n");
     try {
       await this.bot.sendMessage(this.chatId, msg, {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [[
-            { text: "Positions", callback_data: "positions" },
-            { text: "Stats", callback_data: "stats" },
+            { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+            { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
           ]],
         },
       });
@@ -125,25 +126,29 @@ export class TelegramUI {
   // ─── Inline keyboard builders ──────────────────────────────────
 
   private mainMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
+    const isRunning = this.callbacks?.isRunning() ?? false;
+    const toggleBtn = isRunning
+      ? { text: "\u23f8 Pause Bot", callback_data: "pause" }
+      : { text: "\u25b6\ufe0f Resume Bot", callback_data: "resume" };
+
     return {
       inline_keyboard: [
         [
-          { text: "Status", callback_data: "status" },
-          { text: "Balance", callback_data: "balance" },
-          { text: "Positions", callback_data: "positions" },
+          { text: "\ud83d\udcca Status", callback_data: "status" },
+          { text: "\ud83d\udcb0 Balance", callback_data: "balance" },
+          { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
         ],
         [
-          { text: "Stats", callback_data: "stats" },
-          { text: "History", callback_data: "history" },
-          { text: "KOLs", callback_data: "kols" },
+          { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
+          { text: "\ud83d\udcdc History", callback_data: "history" },
+          { text: "\ud83d\udc51 KOLs", callback_data: "kols" },
         ],
         [
-          { text: "Config", callback_data: "config" },
-          { text: "Pause", callback_data: "pause" },
-          { text: "Resume", callback_data: "resume" },
+          { text: "\u2699\ufe0f Settings", callback_data: "config" },
+          toggleBtn,
         ],
         [
-          { text: "Refresh", callback_data: "refresh_menu" },
+          { text: "\ud83d\udd04 Refresh", callback_data: "refresh_menu" },
         ],
       ],
     };
@@ -152,8 +157,8 @@ export class TelegramUI {
   private backToMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
     return {
       inline_keyboard: [[
-        { text: "<< Menu", callback_data: "menu" },
-        { text: "Refresh", callback_data: "refresh_menu" },
+        { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
+        { text: "\ud83d\udd04 Refresh", callback_data: "refresh_menu" },
       ]],
     };
   }
@@ -161,63 +166,71 @@ export class TelegramUI {
   private positionsKeyboard(positions: Position[]): TelegramBot.InlineKeyboardMarkup {
     const rows: TelegramBot.InlineKeyboardButton[][] = [];
     for (const p of positions) {
+      const emoji = p.currentPnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
       rows.push([
-        { text: `Sell ${p.symbol}`, callback_data: `sell:${p.mint}` },
+        { text: `${emoji} Sell ${p.symbol}`, callback_data: `sell:${p.mint}` },
       ]);
     }
     rows.push([
-      { text: "<< Menu", callback_data: "menu" },
-      { text: "Refresh", callback_data: "positions" },
+      { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
+      { text: "\ud83d\udd04 Refresh", callback_data: "positions" },
     ]);
     return { inline_keyboard: rows };
   }
 
-  private configKeyboard(): TelegramBot.InlineKeyboardMarkup {
+  private configKeyboard(c: BotConfig): TelegramBot.InlineKeyboardMarkup {
     return {
       inline_keyboard: [
+        // -- Trade Size --
+        [{ text: `\ud83d\udcb5 Bet Size: ${c.maxBetSol} SOL`, callback_data: "noop" }],
         [
-          { text: "Bet -0.01", callback_data: "cfg:bet:-0.01" },
-          { text: "Bet Size", callback_data: "noop" },
-          { text: "Bet +0.01", callback_data: "cfg:bet:+0.01" },
+          { text: "\u2796 0.01", callback_data: "cfg:bet:-0.01" },
+          { text: "\u2795 0.01", callback_data: "cfg:bet:+0.01" },
         ],
+        // -- Take Profits --
+        [{ text: `\ud83c\udfaf Take Profit 1: +${c.takeProfit1Percent}%`, callback_data: "noop" }],
         [
-          { text: "TP1 -25", callback_data: "cfg:tp1:-25" },
-          { text: "TP1 (2x)", callback_data: "noop" },
-          { text: "TP1 +25", callback_data: "cfg:tp1:+25" },
+          { text: "\u2796 25", callback_data: "cfg:tp1:-25" },
+          { text: "\u2795 25", callback_data: "cfg:tp1:+25" },
         ],
+        [{ text: `\ud83c\udfaf Take Profit 2: +${c.takeProfit2Percent}%`, callback_data: "noop" }],
         [
-          { text: "TP2 -50", callback_data: "cfg:tp2:-50" },
-          { text: "TP2 (4x)", callback_data: "noop" },
-          { text: "TP2 +50", callback_data: "cfg:tp2:+50" },
+          { text: "\u2796 50", callback_data: "cfg:tp2:-50" },
+          { text: "\u2795 50", callback_data: "cfg:tp2:+50" },
         ],
+        [{ text: `\ud83c\udfaf Take Profit 3: +${c.takeProfit3Percent}%`, callback_data: "noop" }],
         [
-          { text: "TP3 -100", callback_data: "cfg:tp3:-100" },
-          { text: "TP3 (10x)", callback_data: "noop" },
-          { text: "TP3 +100", callback_data: "cfg:tp3:+100" },
+          { text: "\u2796 100", callback_data: "cfg:tp3:-100" },
+          { text: "\u2795 100", callback_data: "cfg:tp3:+100" },
         ],
+        // -- Stop Loss --
+        [{ text: `\ud83d\udee1 Stop Loss: -${c.stopLossPercent}%`, callback_data: "noop" }],
         [
-          { text: "SL -5", callback_data: "cfg:sl:-5" },
-          { text: "Stop Loss", callback_data: "noop" },
-          { text: "SL +5", callback_data: "cfg:sl:+5" },
+          { text: "\u2796 5", callback_data: "cfg:sl:-5" },
+          { text: "\u2795 5", callback_data: "cfg:sl:+5" },
         ],
+        // -- Breakeven --
+        [{ text: `\u2696\ufe0f Breakeven At: +${c.breakevenActivationPercent}%`, callback_data: "noop" }],
         [
-          { text: "BE -10", callback_data: "cfg:breakeven:-10" },
-          { text: "Breakeven", callback_data: "noop" },
-          { text: "BE +10", callback_data: "cfg:breakeven:+10" },
+          { text: "\u2796 10", callback_data: "cfg:breakeven:-10" },
+          { text: "\u2795 10", callback_data: "cfg:breakeven:+10" },
         ],
+        // -- Trailing Stop --
+        [{ text: `\ud83d\udcc9 Trailing Stop: ${c.trailingStopPercent}%`, callback_data: "noop" }],
         [
-          { text: "Trail -5", callback_data: "cfg:trailing:-5" },
-          { text: "Trail Stop", callback_data: "noop" },
-          { text: "Trail +5", callback_data: "cfg:trailing:+5" },
+          { text: "\u2796 5", callback_data: "cfg:trailing:-5" },
+          { text: "\u2795 5", callback_data: "cfg:trailing:+5" },
         ],
+        // -- Max Positions --
+        [{ text: `\ud83d\udcca Max Positions: ${c.maxPositions}`, callback_data: "noop" }],
         [
-          { text: "MaxPos -1", callback_data: "cfg:maxpos:-1" },
-          { text: "Max Positions", callback_data: "noop" },
-          { text: "MaxPos +1", callback_data: "cfg:maxpos:+1" },
+          { text: "\u2796 1", callback_data: "cfg:maxpos:-1" },
+          { text: "\u2795 1", callback_data: "cfg:maxpos:+1" },
         ],
+        // -- Nav --
         [
-          { text: "<< Menu", callback_data: "menu" },
-          { text: "Refresh", callback_data: "config" },
+          { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
+          { text: "\ud83d\udd04 Refresh", callback_data: "config" },
         ],
       ],
     };
@@ -226,16 +239,24 @@ export class TelegramUI {
   // ─── Response builders ─────────────────────────────────────────
 
   private buildStartMessage(): string {
+    const isRunning = this.callbacks?.isRunning() ?? false;
+    const statusLine = isRunning
+      ? "\ud83d\udfe2 <b>Auto-Trading: ON</b>"
+      : "\ud83d\udd34 <b>Auto-Trading: OFF</b>";
+
     return [
-      "<b>CoinShark Trading Bot</b>",
+      "\ud83e\udd88 <b>CoinShark Trading Bot</b>",
       "",
-      "Use the buttons below or type commands:",
+      statusLine,
       "",
-      "/buy &lt;mint&gt; - Manual buy",
-      "/sell &lt;mint&gt; - Manual sell",
-      "/addkol &lt;wallet&gt; [alias] - Add KOL",
-      "/removekol &lt;wallet&gt; - Remove KOL",
-      "/set &lt;key&gt; &lt;value&gt; - Update config",
+      "Use the buttons below to control the bot.",
+      "You can also type commands:",
+      "",
+      "/buy &lt;mint&gt; \u2014 Manual buy",
+      "/sell &lt;mint&gt; \u2014 Manual sell",
+      "/addkol &lt;wallet&gt; [alias] \u2014 Add KOL",
+      "/removekol &lt;wallet&gt; \u2014 Remove KOL",
+      "/set &lt;key&gt; &lt;value&gt; \u2014 Update config",
     ].join("\n");
   }
 
@@ -245,59 +266,59 @@ export class TelegramUI {
     const positions = this.callbacks.getPositions();
     const running = this.callbacks.isRunning();
     const uptime = ((Date.now() - this.startTime) / 1000 / 60).toFixed(0);
+    const statusEmoji = running ? "\ud83d\udfe2" : "\ud83d\udd34";
+    const statusText = running ? "ACTIVE \u2014 auto-buying enabled" : "PAUSED \u2014 manual only";
 
     return [
-      `<b>CoinShark Status</b>`,
-      `State: ${running ? "Running" : "Paused"}`,
-      `Uptime: ${uptime} min`,
-      `Balance: ${balance.toFixed(4)} SOL`,
-      `Open Positions: ${positions.length}`,
-      `Wallet: <code>${this.callbacks.getWalletAddress()}</code>`,
+      `\ud83e\udd88 <b>CoinShark Status</b>`,
+      ``,
+      `${statusEmoji} <b>${statusText}</b>`,
+      ``,
+      `\u23f1 Uptime: ${uptime} min`,
+      `\ud83d\udcb0 Balance: <b>${balance.toFixed(4)} SOL</b>`,
+      `\ud83d\udcc2 Open Positions: <b>${positions.length}</b>`,
+      `\ud83d\udd11 Wallet: <code>${this.callbacks.getWalletAddress()}</code>`,
     ].join("\n");
   }
 
   private buildPositionsMessage(positions: Position[]): string {
-    if (positions.length === 0) return "No open positions.";
+    if (positions.length === 0) return "\ud83d\udcc2 No open positions.";
     return positions.map(p => {
+      const pnlEmoji = p.currentPnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
       const pnl = `${p.currentPnlPercent >= 0 ? "+" : ""}${p.currentPnlPercent.toFixed(1)}%`;
       const age = ((Date.now() - p.entryTime) / 1000 / 60).toFixed(1);
       return [
-        `<b>${p.symbol}</b> | ${pnl}`,
-        `  MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
-        `  Invested: ${p.solInvested} SOL | Age: ${age}m`,
-        `  TP: ${p.takeProfitHits}/2`,
-        `  <code>${p.mint}</code>`,
+        `${pnlEmoji} <b>${p.symbol}</b>  ${pnl}`,
+        `   \ud83d\udcca MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
+        `   \ud83d\udcb5 Invested: ${p.solInvested} SOL`,
+        `   \u23f1 Age: ${age}m  |  \ud83c\udfaf TP: ${p.takeProfitHits}/2`,
+        `   <code>${p.mint}</code>`,
       ].join("\n");
     }).join("\n\n");
   }
 
   private buildConfigMessage(c: BotConfig): string {
     return [
-      `<b>Bot Config</b>`,
+      `<b>\u2699\ufe0f Bot Settings</b>`,
       ``,
-      `Bet Size: ${c.maxBetSol} SOL (0.5x-2x by signal)`,
-      `Max Positions: ${c.maxPositions}`,
-      `Slippage: ${c.slippagePercent}%`,
-      `Priority Fee: ${c.priorityFeeSol} SOL`,
+      `<b>\ud83d\udcb5 Trade Size</b>`,
+      `<b>${c.maxBetSol} SOL</b> per trade (auto-scales 0.5x\u20132x based on signal strength)`,
+      `Up to <b>${c.maxPositions}</b> trades open at once`,
       ``,
-      `<b>Exit Strategy:</b>`,
-      `TP1: +${c.takeProfit1Percent}% (sell 50%, recover initial)`,
-      `TP2: +${c.takeProfit2Percent}% (sell 50% of remaining)`,
-      `TP3: +${c.takeProfit3Percent}% (sell to ${c.moonbagPercent}% moonbag)`,
-      `SL: -${c.stopLossPercent}%`,
-      `Breakeven: activates at +${c.breakevenActivationPercent}%`,
-      `Trailing Stop: ${c.trailingStopPercent}% below HWM (after TP1)`,
-      `Moonbag Trail: ${c.moonbagTrailingStopPercent}% below HWM`,
+      `<b>\ud83c\udfaf When to Take Profit</b>`,
+      `<i>The bot sells in stages as price goes up:</i>`,
+      `  1\ufe0f\u20e3  At <b>+${c.takeProfit1Percent}%</b> \u2014 sell half, get your money back`,
+      `  2\ufe0f\u20e3  At <b>+${c.takeProfit2Percent}%</b> \u2014 sell half of what's left`,
+      `  3\ufe0f\u20e3  At <b>+${c.takeProfit3Percent}%</b> \u2014 sell down to ${c.moonbagPercent}% moonbag`,
       ``,
-      `Max Position Age: ${c.maxPositionAgeMinutes} min`,
-      `Daily Loss Limit: ${c.dailyLossLimitSol} SOL`,
+      `<b>\ud83d\udee1 Protection</b>`,
+      `<i>Automatic safety nets to limit losses:</i>`,
+      `  \ud83d\udd34 <b>Stop Loss:</b> sell if price drops <b>-${c.stopLossPercent}%</b>`,
+      `  \u2696\ufe0f <b>Breakeven:</b> once up <b>+${c.breakevenActivationPercent}%</b>, stop loss moves to your entry price`,
+      `  \ud83d\udcc9 <b>Trailing:</b> after TP1, auto-sell if price drops <b>${c.trailingStopPercent}%</b> from peak`,
+      `  \u23f0 <b>Max hold:</b> ${c.maxPositionAgeMinutes} min \u2022 Daily limit: ${c.dailyLossLimitSol} SOL loss`,
       ``,
-      `MCap Range: ${c.minMarketCapSol}-${c.maxMarketCapSol} SOL`,
-      `Bonding Curve: ${c.minBondingCurvePercent}-${c.maxBondingCurvePercent}%`,
-      `Min 5m Volume: ${c.min5mVolumeSol} SOL`,
-      `Min 5m Buyers: ${c.min5mBuyers}`,
-      ``,
-      `Tap buttons below to adjust:`,
+      `<i>Tap \u2796/\u2795 below to adjust any setting:</i>`,
     ].join("\n");
   }
 
@@ -384,7 +405,7 @@ export class TelegramUI {
         // Stats
         if (data === "stats") {
           const stats = this.callbacks.getStats();
-          await this.bot.editMessageText(`<b>Trading Stats</b>\n\n${stats}`, {
+          await this.bot.editMessageText(`\ud83c\udfc6 <b>Trading Stats</b>\n\n${stats}`, {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
@@ -397,7 +418,7 @@ export class TelegramUI {
         // History
         if (data === "history") {
           const history = this.callbacks.getRecentTrades();
-          await this.bot.editMessageText(`<b>Recent Trades</b>\n\n<pre>${history}</pre>`, {
+          await this.bot.editMessageText(`\ud83d\udcdc <b>Recent Trades</b>\n\n<pre>${history}</pre>`, {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
@@ -410,16 +431,16 @@ export class TelegramUI {
         // KOLs
         if (data === "kols") {
           const list = this.callbacks.getKolList();
-          await this.bot.editMessageText(`<b>Tracked KOLs</b>\n\n${list}`, {
+          await this.bot.editMessageText(`\ud83d\udc51 <b>Tracked KOLs</b>\n\n${list}`, {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
             reply_markup: {
               inline_keyboard: [
-                [{ text: "Discover from GMGN", callback_data: "gmgn_discover" }],
+                [{ text: "\ud83d\udd0d Discover from GMGN", callback_data: "gmgn_discover" }],
                 [
-                  { text: "<< Menu", callback_data: "menu" },
-                  { text: "Refresh", callback_data: "kols" },
+                  { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
+                  { text: "\ud83d\udd04 Refresh", callback_data: "kols" },
                 ],
               ],
             },
@@ -430,8 +451,8 @@ export class TelegramUI {
 
         // GMGN Discovery
         if (data === "gmgn_discover") {
-          await this.bot.answerCallbackQuery(query.id, { text: "Scanning GMGN for top wallets..." });
-          await this.bot.editMessageText("<b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.", {
+          await this.bot.answerCallbackQuery(query.id, { text: "Scanning GMGN..." });
+          await this.bot.editMessageText("\ud83d\udd0d <b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.", {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
@@ -445,8 +466,8 @@ export class TelegramUI {
               parse_mode: "HTML",
               reply_markup: {
                 inline_keyboard: [
-                  [{ text: "View KOLs", callback_data: "kols" }],
-                  [{ text: "<< Menu", callback_data: "menu" }],
+                  [{ text: "\ud83d\udc51 View KOLs", callback_data: "kols" }],
+                  [{ text: "\u2b05\ufe0f Menu", callback_data: "menu" }],
                 ],
               },
             });
@@ -457,8 +478,8 @@ export class TelegramUI {
               parse_mode: "HTML",
               reply_markup: {
                 inline_keyboard: [
-                  [{ text: "Retry", callback_data: "gmgn_discover" }],
-                  [{ text: "<< Menu", callback_data: "menu" }],
+                  [{ text: "\ud83d\udd04 Retry", callback_data: "gmgn_discover" }],
+                  [{ text: "\u2b05\ufe0f Menu", callback_data: "menu" }],
                 ],
               },
             });
@@ -473,7 +494,7 @@ export class TelegramUI {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
-            reply_markup: this.configKeyboard(),
+            reply_markup: this.configKeyboard(c),
           });
           await this.bot.answerCallbackQuery(query.id);
           return;
@@ -503,7 +524,7 @@ export class TelegramUI {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
-            reply_markup: this.configKeyboard(),
+            reply_markup: this.configKeyboard(updated),
           });
           await this.bot.answerCallbackQuery(query.id, { text: `${key} = ${newValStr}` });
           return;
@@ -512,13 +533,13 @@ export class TelegramUI {
         // Pause
         if (data === "pause") {
           this.callbacks.pauseTrading();
-          await this.bot.answerCallbackQuery(query.id, { text: "Auto-trading PAUSED" });
-          await this.bot.sendMessage(chatId, "Auto-trading <b>PAUSED</b>. Manual trades still work.", {
+          await this.bot.answerCallbackQuery(query.id, { text: "\ud83d\udd34 Paused" });
+          await this.bot.sendMessage(chatId, "\ud83d\udd34 <b>Auto-Trading: OFF</b>\n\nThe bot will NOT open new positions.\nManual /buy and /sell still work.", {
             parse_mode: "HTML",
             reply_markup: {
               inline_keyboard: [[
-                { text: "Resume", callback_data: "resume" },
-                { text: "<< Menu", callback_data: "menu" },
+                { text: "\u25b6\ufe0f Resume Bot", callback_data: "resume" },
+                { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
               ]],
             },
           });
@@ -528,13 +549,13 @@ export class TelegramUI {
         // Resume
         if (data === "resume") {
           this.callbacks.resumeTrading();
-          await this.bot.answerCallbackQuery(query.id, { text: "Auto-trading RESUMED" });
-          await this.bot.sendMessage(chatId, "Auto-trading <b>RESUMED</b>.", {
+          await this.bot.answerCallbackQuery(query.id, { text: "\ud83d\udfe2 Resumed" });
+          await this.bot.sendMessage(chatId, "\ud83d\udfe2 <b>Auto-Trading: ON</b>\n\nThe bot is now scanning and buying automatically.", {
             parse_mode: "HTML",
             reply_markup: {
               inline_keyboard: [[
-                { text: "Status", callback_data: "status" },
-                { text: "<< Menu", callback_data: "menu" },
+                { text: "\ud83d\udcca Status", callback_data: "status" },
+                { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
               ]],
             },
           });
@@ -624,11 +645,11 @@ export class TelegramUI {
       this.bot.sendMessage(msg.chat.id, `Buying ${mint.slice(0, 12)}...`);
       const result = await this.callbacks.manualBuy(mint);
       if (result.success) {
-        this.bot.sendMessage(msg.chat.id, "Buy executed successfully.", {
+        this.bot.sendMessage(msg.chat.id, "\ud83d\udfe2 Buy executed successfully.", {
           reply_markup: {
             inline_keyboard: [[
-              { text: "Positions", callback_data: "positions" },
-              { text: "Sell", callback_data: `sell:${mint}` },
+              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+              { text: "\ud83d\udcb8 Sell", callback_data: `sell:${mint}` },
             ]],
           },
         });
@@ -664,10 +685,10 @@ export class TelegramUI {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Discover from GMGN", callback_data: "gmgn_discover" }],
+            [{ text: "\ud83d\udd0d Discover from GMGN", callback_data: "gmgn_discover" }],
             [
-              { text: "<< Menu", callback_data: "menu" },
-              { text: "Refresh", callback_data: "kols" },
+              { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
+              { text: "\ud83d\udd04 Refresh", callback_data: "kols" },
             ],
           ],
         },
@@ -679,7 +700,7 @@ export class TelegramUI {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const pendingMsg = await this.bot.sendMessage(
         msg.chat.id,
-        "<b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.",
+        "\ud83d\udd0d <b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.",
         { parse_mode: "HTML" }
       );
       try {
@@ -691,8 +712,8 @@ export class TelegramUI {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "View KOLs", callback_data: "kols" }],
-              [{ text: "<< Menu", callback_data: "menu" }],
+              [{ text: "\ud83d\udc51 View KOLs", callback_data: "kols" }],
+              [{ text: "\u2b05\ufe0f Menu", callback_data: "menu" }],
             ],
           },
         });
@@ -703,8 +724,8 @@ export class TelegramUI {
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "Retry", callback_data: "gmgn_discover" }],
-              [{ text: "<< Menu", callback_data: "menu" }],
+              [{ text: "\ud83d\udd04 Retry", callback_data: "gmgn_discover" }],
+              [{ text: "\u2b05\ufe0f Menu", callback_data: "menu" }],
             ],
           },
         });
@@ -726,8 +747,8 @@ export class TelegramUI {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [[
-            { text: "View KOLs", callback_data: "kols" },
-            { text: "<< Menu", callback_data: "menu" },
+            { text: "\ud83d\udc51 View KOLs", callback_data: "kols" },
+            { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
           ]],
         },
       });
@@ -741,8 +762,8 @@ export class TelegramUI {
       this.bot.sendMessage(msg.chat.id, removed ? `Removed KOL: ${address.slice(0, 12)}...` : "KOL not found.", {
         reply_markup: {
           inline_keyboard: [[
-            { text: "View KOLs", callback_data: "kols" },
-            { text: "<< Menu", callback_data: "menu" },
+            { text: "\ud83d\udc51 View KOLs", callback_data: "kols" },
+            { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
           ]],
         },
       });
@@ -772,12 +793,12 @@ export class TelegramUI {
     this.bot.onText(/\/pause/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       this.callbacks.pauseTrading();
-      this.bot.sendMessage(msg.chat.id, "Auto-trading <b>PAUSED</b>. Manual trades still work.", {
+      this.bot.sendMessage(msg.chat.id, "\ud83d\udd34 <b>Auto-Trading: OFF</b>\n\nThe bot will NOT open new positions.\nManual /buy and /sell still work.", {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [[
-            { text: "Resume", callback_data: "resume" },
-            { text: "<< Menu", callback_data: "menu" },
+            { text: "\u25b6\ufe0f Resume Bot", callback_data: "resume" },
+            { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
           ]],
         },
       });
@@ -787,12 +808,12 @@ export class TelegramUI {
     this.bot.onText(/\/resume/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       this.callbacks.resumeTrading();
-      this.bot.sendMessage(msg.chat.id, "Auto-trading <b>RESUMED</b>.", {
+      this.bot.sendMessage(msg.chat.id, "\ud83d\udfe2 <b>Auto-Trading: ON</b>\n\nThe bot is now scanning and buying automatically.", {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [[
-            { text: "Status", callback_data: "status" },
-            { text: "<< Menu", callback_data: "menu" },
+            { text: "\ud83d\udcca Status", callback_data: "status" },
+            { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
           ]],
         },
       });
@@ -814,7 +835,7 @@ export class TelegramUI {
       const c = this.callbacks.getConfig();
       this.bot.sendMessage(msg.chat.id, this.buildConfigMessage(c), {
         parse_mode: "HTML",
-        reply_markup: this.configKeyboard(),
+        reply_markup: this.configKeyboard(c),
       });
     });
 
@@ -831,8 +852,8 @@ export class TelegramUI {
         this.bot.sendMessage(msg.chat.id, `Updated ${parts[0]} = ${parts[1]}`, {
           reply_markup: {
             inline_keyboard: [[
-              { text: "View Config", callback_data: "config" },
-              { text: "<< Menu", callback_data: "menu" },
+              { text: "\u2699\ufe0f Settings", callback_data: "config" },
+              { text: "\u2b05\ufe0f Menu", callback_data: "menu" },
             ]],
           },
         });

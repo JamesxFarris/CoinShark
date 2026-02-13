@@ -249,23 +249,23 @@ export class CoinSharkBot {
     if (!shouldBuy || !momentum) return;
 
     // Run full scam analysis before committing real money
-    log.info(`Evaluating ${this.tokenSymbols.get(trade.mint)} for purchase...`);
+    const symbol = this.tokenSymbols.get(trade.mint) ?? trade.mint.slice(0, 8);
+    log.info(`Evaluating ${symbol} for purchase...`);
     const scamResult = await this.scamFilter.analyze(trade.mint);
 
     if (!scamResult.passed) {
       log.scam(
-        `BLOCKED ${this.tokenSymbols.get(trade.mint)}: ${scamResult.reasons.join("; ")}`
+        `BLOCKED ${symbol}: ${scamResult.reasons.join("; ")}`
       );
       this.unwatchToken(trade.mint);
       return;
     }
 
     log.signal(
-      `BUY SIGNAL for ${this.tokenSymbols.get(trade.mint)}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
+      `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
     );
 
     // Execute the trade (pass signal score for position sizing)
-    const symbol = this.tokenSymbols.get(trade.mint) ?? "???";
     const opened = await this.riskManager.openPosition(
       trade.mint,
       symbol,

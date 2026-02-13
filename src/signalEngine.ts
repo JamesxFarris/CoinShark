@@ -45,6 +45,7 @@ interface TokenState {
   creatorSold: boolean;
   holderSnapshots: HolderSnapshot[];
   allUniqueBuyers: Set<string>;
+  lastCoordinatedSellTime: number;
 }
 
 /**
@@ -98,6 +99,7 @@ export class SignalEngine {
       creatorSold: false,
       holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
       allUniqueBuyers: new Set(),
+      lastCoordinatedSellTime: 0,
     });
   }
 
@@ -160,6 +162,7 @@ export class SignalEngine {
         creatorSold: false,
         holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
         allUniqueBuyers: new Set(),
+        lastCoordinatedSellTime: 0,
       };
       this.tokenStates.set(trade.mint, state);
     }
@@ -258,25 +261,41 @@ export class SignalEngine {
       }
     }
 
-    // === Coordinated sell detection ===
-    const recentSells = state.trades.filter(
-      (t) => t.action === "sell" && now - t.timestamp < 10_000
-    );
-    const uniqueRecentSellers = new Set(recentSells.map((t) => t.trader));
-    const recentSellVolume = recentSells.reduce((s, t) => s + t.solAmount, 0);
-    const recent1mBuyVolume = state.trades
-      .filter((t) => t.action === "buy" && now - t.timestamp < ONE_MINUTE_MS)
-      .reduce((s, t) => s + t.solAmount, 0);
+    // === Coordinated sell detection (ratio-aware with cooldown) ===
+    // Only fire if sell pressure actually dominates buy pressure, not just because
+    // an active token has normal two-sided volume. 30s cooldown prevents log spam.
+    if (now - state.lastCoordinatedSellTime >= 30_000) {
+      const recentSells = state.trades.filter(
+        (t) => t.action === "sell" && now - t.timestamp < 10_000
+      );
+      const uniqueRecentSellers = new Set(recentSells.map((t) => t.trader));
+      const recentSellVolume = recentSells.reduce((s, t) => s + t.solAmount, 0);
 
-    if (uniqueRecentSellers.size >= 3 && recentSellVolume > recent1mBuyVolume * 0.5) {
-      signals.push({
-        type: "coordinated_sell",
-        mint: trade.mint,
-        strength: Math.min(100, uniqueRecentSellers.size * 20),
-        details: `${uniqueRecentSellers.size} wallets sold ${recentSellVolume.toFixed(2)} SOL in 10s`,
-        timestamp: now,
-      });
-      log.signal(`${state.symbol}: COORDINATED SELL — ${uniqueRecentSellers.size} wallets, ${recentSellVolume.toFixed(2)} SOL`);
+      const recentBuys = state.trades.filter(
+        (t) => t.action === "buy" && now - t.timestamp < 10_000
+      );
+      const uniqueRecentBuyers = new Set(recentBuys.map((t) => t.trader));
+      const recentBuyVolume = recentBuys.reduce((s, t) => s + t.solAmount, 0);
+
+      // Require: 5+ unique sellers, sell volume > buy volume in same window,
+      // AND sellers outnumber buyers (true dump, not just normal two-sided trading)
+      if (
+        uniqueRecentSellers.size >= 5 &&
+        recentSellVolume > recentBuyVolume * 1.5 &&
+        uniqueRecentSellers.size > uniqueRecentBuyers.size
+      ) {
+        const sellDominance = recentBuyVolume > 0 ? recentSellVolume / recentBuyVolume : 10;
+        const strength = Math.min(100, Math.round(sellDominance * 20 + uniqueRecentSellers.size * 5));
+        signals.push({
+          type: "coordinated_sell",
+          mint: trade.mint,
+          strength,
+          details: `${uniqueRecentSellers.size} sellers vs ${uniqueRecentBuyers.size} buyers, sell/buy ratio ${sellDominance.toFixed(1)}x in 10s`,
+          timestamp: now,
+        });
+        log.signal(`${state.symbol}: COORDINATED SELL — ${uniqueRecentSellers.size} sellers (${recentSellVolume.toFixed(2)} SOL) vs ${uniqueRecentBuyers.size} buyers (${recentBuyVolume.toFixed(2)} SOL)`);
+        state.lastCoordinatedSellTime = now;
+      }
     }
 
     return signals;
@@ -339,9 +358,10 @@ export class SignalEngine {
     }
 
     // Momentum signal — organic buyer growth with positive ratio
+    // Ratio >= 1.2 is healthy; active tokens always have sell-side volume
     if (
       recentBuyers.size >= this.config.min5mBuyers &&
-      buyToSellRatio >= 1.5
+      buyToSellRatio >= 1.2
     ) {
       const strength = Math.min(
         100,
@@ -475,12 +495,12 @@ export class SignalEngine {
         case "alpha_wallet":
           aggregateScore += signal.strength * 0.10;
           break;
-        // Negative signals reduce score
+        // Negative signals reduce score (moderate penalty — active tokens have sells)
         case "coordinated_sell":
-          aggregateScore -= signal.strength * 0.30;
+          aggregateScore -= signal.strength * 0.15;
           break;
         case "creator_sell":
-          aggregateScore -= signal.strength * 0.50;
+          aggregateScore -= signal.strength * 0.20;
           break;
         default:
           break;
@@ -504,10 +524,9 @@ export class SignalEngine {
       aggregateScore = 0;
     }
 
-    // Creator sold = hard zero (do not buy tokens where creator dumped)
-    if (state.creatorSold) {
-      aggregateScore = 0;
-    }
+    // Creator sold = significant penalty, but NOT a hard zero.
+    // "No dev" tokens (where creator sold early) can still run if momentum is strong.
+    // The creator_sell signal already subtracts via the weighted scoring above.
 
     return {
       mint,
