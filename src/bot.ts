@@ -78,7 +78,7 @@ export class CoinSharkBot {
     await this.wallet.printStatus();
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
-    log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | SL: -${this.config.stopLossPercent}%`);
+    log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | SL: -${this.config.stopLossPercent}% | Moonbag: ${this.config.moonbagPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
     log.info(`Daily loss limit: ${this.config.dailyLossLimitSol} SOL`);
     log.info(`Bonding curve range: ${this.config.minBondingCurvePercent}-${this.config.maxBondingCurvePercent}%`);
@@ -402,6 +402,7 @@ export class CoinSharkBot {
           case "tp1": this.config.takeProfit1Percent = num; break;
           case "tp2": this.config.takeProfit2Percent = num; break;
           case "sl": this.config.stopLossPercent = num; break;
+          case "moonbag": this.config.moonbagPercent = Math.max(0, Math.min(50, num)); break;
           case "maxage": this.config.maxPositionAgeMinutes = num; break;
           case "dailyloss": this.config.dailyLossLimitSol = num; break;
           default: return false;

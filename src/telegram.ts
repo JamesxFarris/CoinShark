@@ -298,8 +298,9 @@ export class TelegramUI {
         `Priority Fee: ${c.priorityFeeSol} SOL`,
         ``,
         `TP1: +${c.takeProfit1Percent}% (sell 50%)`,
-        `TP2: +${c.takeProfit2Percent}% (sell rest)`,
+        `TP2: +${c.takeProfit2Percent}% (sell ${100 - c.moonbagPercent}%, keep ${c.moonbagPercent}% moonbag)`,
         `SL: -${c.stopLossPercent}%`,
+        `Moonbag: ${c.moonbagPercent}%`,
         ``,
         `Max Position Age: ${c.maxPositionAgeMinutes} min`,
         `Daily Loss Limit: ${c.dailyLossLimitSol} SOL`,
@@ -310,7 +311,7 @@ export class TelegramUI {
         `Min 5m Buyers: ${c.min5mBuyers}`,
         ``,
         `<b>Adjustable with /set:</b>`,
-        `bet, maxpos, tp1, tp2, sl, maxage, dailyloss`,
+        `bet, maxpos, tp1, tp2, sl, moonbag, maxage, dailyloss`,
       ].join("\n"), { parse_mode: "HTML" });
     });
 

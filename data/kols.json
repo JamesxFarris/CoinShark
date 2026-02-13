@@ -273,5 +273,49 @@
     "winRate": 50,
     "score": 50,
     "lastActive": 0
+  },
+  {
+    "address": "AVAZvHLR2PcWpDf8BXY4rVxNHYRBytycHkcB5z5QNXYm",
+    "alias": "AlphaInsider",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 50,
+    "lastActive": 0
+  },
+  {
+    "address": "4Be9CvxqHW6BYiRAxW9Q3xu1ycTMWaL5z8NX4HR3ha7t",
+    "alias": "100xHunter",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 50,
+    "lastActive": 0
+  },
+  {
+    "address": "8zFZHuSRuDpuAR7J6FzwyF3vKNx4CVW3DFHJerQhc7Zd",
+    "alias": "DuneAlpha",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 50,
+    "lastActive": 0
+  },
+  {
+    "address": "H72yLkhTnoBfhBTXXaj1RBXuirm8s8G5fcVh2XpQLggM",
+    "alias": "GmgnEarly",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 50,
+    "lastActive": 0
   }
 ]

@@ -34,6 +34,7 @@ export function loadConfig(): BotConfig {
     takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 50),
     takeProfit2Percent: envNum("TAKE_PROFIT_2_PERCENT", 100),
     stopLossPercent: envNum("STOP_LOSS_PERCENT", 30),
+    moonbagPercent: envNum("MOONBAG_PERCENT", 10),
 
     maxTopHolderPercent: envNum("MAX_TOP_HOLDER_PERCENT", 50),
     minUniqueHolders: envNum("MIN_UNIQUE_HOLDERS", 10),

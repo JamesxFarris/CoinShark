@@ -189,15 +189,36 @@ export class RiskManager {
       return;
     }
 
-    // === Take Profit 2 (sell remaining) ===
+    // === Take Profit 2 (sell remaining, keep moonbag) ===
     if (
       pos.takeProfitHits === 1 &&
       pos.currentPnlPercent >= this.config.takeProfit2Percent
     ) {
-      log.trade(
-        `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — closing position`
-      );
-      await this.closePosition(pos.mint, 100, "take_profit_2");
+      const moonbag = this.config.moonbagPercent;
+      if (moonbag > 0 && moonbag < 100) {
+        // Sell everything except the moonbag
+        const sellPercent = 100 - moonbag;
+        log.trade(
+          `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling ${sellPercent}%, keeping ${moonbag}% moonbag`
+        );
+        const result = await this.trader.sell(pos.mint, sellPercent);
+        if (result.success) {
+          pos.takeProfitHits = 2;
+          // Record partial close in trade history
+          this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_2_moonbag", result.signature);
+          if (this.onPositionClose) {
+            this.onPositionClose(pos, pos.currentMarketCapSol, "take_profit_2_moonbag", result.signature);
+          }
+          // Keep tracking the moonbag position but reduce invested amount
+          pos.solInvested = pos.solInvested * (moonbag / 100);
+        }
+      } else {
+        // No moonbag — sell everything
+        log.trade(
+          `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — closing position`
+        );
+        await this.closePosition(pos.mint, 100, "take_profit_2");
+      }
       return;
     }
   }

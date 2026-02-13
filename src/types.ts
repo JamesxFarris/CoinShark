@@ -180,6 +180,7 @@ export interface BotConfig {
   takeProfit1Percent: number;
   takeProfit2Percent: number;
   stopLossPercent: number;
+  moonbagPercent: number; // % of position to keep as moonbag after TP2
 
   // Scam Filters
   maxTopHolderPercent: number;
