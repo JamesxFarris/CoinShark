@@ -70,15 +70,21 @@ export class TelegramUI {
       `\ud83d\udcb5 Amount: ${solAmount} SOL`,
       `\ud83d\udcca MCap: ${marketCapSol.toFixed(2)} SOL`,
       `\u26a1 Signals: ${signals.join(", ")}`,
+      ``,
+      `\ud83d\udcc8 <a href="https://pump.fun/coin/${mint}">View Chart on Pump.fun</a>`,
     ].join("\n");
     try {
       await this.bot.sendMessage(this.chatId, msg, {
         parse_mode: "HTML",
+        disable_web_page_preview: true,
         reply_markup: {
-          inline_keyboard: [[
-            { text: "\ud83d\udcb8 Sell Now", callback_data: `sell:${mint}` },
-            { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
-          ]],
+          inline_keyboard: [
+            [{ text: "\ud83d\udcc8 Chart", url: `https://pump.fun/coin/${mint}` }],
+            [
+              { text: "\ud83d\udcb8 Sell Now", callback_data: `sell:${mint}` },
+              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+            ],
+          ],
         },
       });
     } catch (err: any) {
@@ -89,7 +95,7 @@ export class TelegramUI {
   /**
    * Send sell alert
    */
-  async alertSell(symbol: string, pnlPercent: number, pnlSol: number, reason: string) {
+  async alertSell(symbol: string, mint: string, pnlPercent: number, pnlSol: number, reason: string) {
     const sign = pnlPercent >= 0 ? "+" : "";
     const pnlEmoji = pnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
     const msg = [
@@ -100,11 +106,15 @@ export class TelegramUI {
     try {
       await this.bot.sendMessage(this.chatId, msg, {
         parse_mode: "HTML",
+        disable_web_page_preview: true,
         reply_markup: {
-          inline_keyboard: [[
-            { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
-            { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
-          ]],
+          inline_keyboard: [
+            [{ text: `\ud83d\udcc8 ${symbol} Chart`, url: `https://pump.fun/coin/${mint}` }],
+            [
+              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+              { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
+            ],
+          ],
         },
       });
     } catch (err: any) {
@@ -168,6 +178,7 @@ export class TelegramUI {
     for (const p of positions) {
       const emoji = p.currentPnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
       rows.push([
+        { text: `\ud83d\udcc8 ${p.symbol} Chart`, url: `https://pump.fun/coin/${p.mint}` },
         { text: `${emoji} Sell ${p.symbol}`, callback_data: `sell:${p.mint}` },
       ]);
     }
@@ -292,7 +303,7 @@ export class TelegramUI {
         `   \ud83d\udcca MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
         `   \ud83d\udcb5 Invested: ${p.solInvested} SOL`,
         `   \u23f1 Age: ${age}m  |  \ud83c\udfaf TP: ${p.takeProfitHits}/2`,
-        `   <code>${p.mint}</code>`,
+        `   \ud83d\udcc8 <a href="https://pump.fun/coin/${p.mint}">Chart</a>  |  <code>${p.mint}</code>`,
       ].join("\n");
     }).join("\n\n");
   }

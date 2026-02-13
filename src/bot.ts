@@ -320,7 +320,7 @@ export class CoinSharkBot {
 
     // Telegram sell alert
     if (this.telegram) {
-      await this.telegram.alertSell(position.symbol, pnlPercent, pnlSol, reason);
+      await this.telegram.alertSell(position.symbol, position.mint, pnlPercent, pnlSol, reason);
     }
   }
 
