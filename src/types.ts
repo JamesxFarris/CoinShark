@@ -108,12 +108,17 @@ export interface Position {
   entryMarketCapSol: number;
   tokenAmount: number;
   solInvested: number;
+  solRecovered: number; // SOL recovered from partial sells
   entryTime: number;
   currentMarketCapSol: number;
   currentPnlPercent: number;
   highWaterMarkPnl: number; // highest PnL seen (for trailing stop)
-  takeProfitHits: number; // how many TP levels hit
+  takeProfitHits: number; // how many TP levels hit (0-3)
+  breakevenStopActive: boolean; // true once PnL crossed breakeven threshold
+  trailingStopActive: boolean; // true after TP1 hit
+  isMoonbag: boolean; // true after TP3 (only moonbag left)
   signals: Signal[]; // signals that triggered the buy
+  signalScore: number; // aggregate signal score at entry (for sizing)
 }
 
 // === KOL Discovery & Scoring ===
@@ -179,8 +184,12 @@ export interface BotConfig {
   // Take Profit / Stop Loss
   takeProfit1Percent: number;
   takeProfit2Percent: number;
+  takeProfit3Percent: number;
   stopLossPercent: number;
-  moonbagPercent: number; // % of position to keep as moonbag after TP2
+  moonbagPercent: number; // % of position to keep as moonbag after TP3
+  breakevenActivationPercent: number; // move SL to breakeven once PnL hits this
+  trailingStopPercent: number; // after TP1, sell if price drops this % from HWM
+  moonbagTrailingStopPercent: number; // trailing stop for moonbag positions
 
   // Scam Filters
   maxTopHolderPercent: number;

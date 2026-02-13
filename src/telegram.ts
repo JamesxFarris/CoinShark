@@ -179,19 +179,34 @@ export class TelegramUI {
           { text: "Bet +0.01", callback_data: "cfg:bet:+0.01" },
         ],
         [
-          { text: "TP1 -10", callback_data: "cfg:tp1:-10" },
-          { text: "Take Profit 1", callback_data: "noop" },
-          { text: "TP1 +10", callback_data: "cfg:tp1:+10" },
+          { text: "TP1 -25", callback_data: "cfg:tp1:-25" },
+          { text: "TP1 (2x)", callback_data: "noop" },
+          { text: "TP1 +25", callback_data: "cfg:tp1:+25" },
         ],
         [
           { text: "TP2 -50", callback_data: "cfg:tp2:-50" },
-          { text: "Take Profit 2", callback_data: "noop" },
+          { text: "TP2 (4x)", callback_data: "noop" },
           { text: "TP2 +50", callback_data: "cfg:tp2:+50" },
+        ],
+        [
+          { text: "TP3 -100", callback_data: "cfg:tp3:-100" },
+          { text: "TP3 (10x)", callback_data: "noop" },
+          { text: "TP3 +100", callback_data: "cfg:tp3:+100" },
         ],
         [
           { text: "SL -5", callback_data: "cfg:sl:-5" },
           { text: "Stop Loss", callback_data: "noop" },
           { text: "SL +5", callback_data: "cfg:sl:+5" },
+        ],
+        [
+          { text: "BE -10", callback_data: "cfg:breakeven:-10" },
+          { text: "Breakeven", callback_data: "noop" },
+          { text: "BE +10", callback_data: "cfg:breakeven:+10" },
+        ],
+        [
+          { text: "Trail -5", callback_data: "cfg:trailing:-5" },
+          { text: "Trail Stop", callback_data: "noop" },
+          { text: "Trail +5", callback_data: "cfg:trailing:+5" },
         ],
         [
           { text: "MaxPos -1", callback_data: "cfg:maxpos:-1" },
@@ -258,15 +273,19 @@ export class TelegramUI {
     return [
       `<b>Bot Config</b>`,
       ``,
-      `Bet Size: ${c.maxBetSol} SOL`,
+      `Bet Size: ${c.maxBetSol} SOL (0.5x-2x by signal)`,
       `Max Positions: ${c.maxPositions}`,
       `Slippage: ${c.slippagePercent}%`,
       `Priority Fee: ${c.priorityFeeSol} SOL`,
       ``,
-      `TP1: +${c.takeProfit1Percent}% (sell 50%)`,
-      `TP2: +${c.takeProfit2Percent}% (sell ${100 - c.moonbagPercent}%, keep ${c.moonbagPercent}% moonbag)`,
+      `<b>Exit Strategy:</b>`,
+      `TP1: +${c.takeProfit1Percent}% (sell 50%, recover initial)`,
+      `TP2: +${c.takeProfit2Percent}% (sell 50% of remaining)`,
+      `TP3: +${c.takeProfit3Percent}% (sell to ${c.moonbagPercent}% moonbag)`,
       `SL: -${c.stopLossPercent}%`,
-      `Moonbag: ${c.moonbagPercent}%`,
+      `Breakeven: activates at +${c.breakevenActivationPercent}%`,
+      `Trailing Stop: ${c.trailingStopPercent}% below HWM (after TP1)`,
+      `Moonbag Trail: ${c.moonbagTrailingStopPercent}% below HWM`,
       ``,
       `Max Position Age: ${c.maxPositionAgeMinutes} min`,
       `Daily Loss Limit: ${c.dailyLossLimitSol} SOL`,
@@ -421,7 +440,10 @@ export class TelegramUI {
           if (key === "bet") current = c.maxBetSol;
           else if (key === "tp1") current = c.takeProfit1Percent;
           else if (key === "tp2") current = c.takeProfit2Percent;
+          else if (key === "tp3") current = c.takeProfit3Percent;
           else if (key === "sl") current = c.stopLossPercent;
+          else if (key === "breakeven") current = c.breakevenActivationPercent;
+          else if (key === "trailing") current = c.trailingStopPercent;
           else if (key === "maxpos") current = c.maxPositions;
 
           const newVal = Math.max(0, current + delta);
@@ -707,7 +729,7 @@ export class TelegramUI {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const parts = match[1].trim().split(/\s+/);
       if (parts.length < 2) {
-        this.bot.sendMessage(msg.chat.id, "Usage: /set <key> <value>\nKeys: bet, maxpos, tp1, tp2, sl, maxage, dailyloss");
+        this.bot.sendMessage(msg.chat.id, "Usage: /set <key> <value>\nKeys: bet, maxpos, tp1, tp2, tp3, sl, breakeven, trailing, moonbag, moonbagtrail, maxage, dailyloss");
         return;
       }
       const updated = this.callbacks.updateConfig(parts[0], parts[1]);
@@ -721,7 +743,7 @@ export class TelegramUI {
           },
         });
       } else {
-        this.bot.sendMessage(msg.chat.id, `Unknown setting: ${parts[0]}\nValid: bet, maxpos, tp1, tp2, sl, maxage, dailyloss`);
+        this.bot.sendMessage(msg.chat.id, `Unknown setting: ${parts[0]}\nValid: bet, maxpos, tp1, tp2, tp3, sl, breakeven, trailing, moonbag, moonbagtrail, maxage, dailyloss`);
       }
     });
   }

@@ -78,7 +78,8 @@ export class CoinSharkBot {
     await this.wallet.printStatus();
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
-    log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | SL: -${this.config.stopLossPercent}% | Moonbag: ${this.config.moonbagPercent}%`);
+    log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | TP3: +${this.config.takeProfit3Percent}% | SL: -${this.config.stopLossPercent}%`);
+    log.info(`Moonbag: ${this.config.moonbagPercent}% | Breakeven at: +${this.config.breakevenActivationPercent}% | Trailing: ${this.config.trailingStopPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
     log.info(`Daily loss limit: ${this.config.dailyLossLimitSol} SOL`);
     log.info(`Bonding curve range: ${this.config.minBondingCurvePercent}-${this.config.maxBondingCurvePercent}%`);
@@ -226,13 +227,14 @@ export class CoinSharkBot {
       `BUY SIGNAL for ${this.tokenSymbols.get(trade.mint)}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
     );
 
-    // Execute the trade
+    // Execute the trade (pass signal score for position sizing)
     const symbol = this.tokenSymbols.get(trade.mint) ?? "???";
     const opened = await this.riskManager.openPosition(
       trade.mint,
       symbol,
       trade.marketCapSol,
-      momentum.signals
+      momentum.signals,
+      momentum.aggregateScore
     );
 
     if (opened) {
@@ -401,8 +403,12 @@ export class CoinSharkBot {
           case "maxpos": this.config.maxPositions = num; break;
           case "tp1": this.config.takeProfit1Percent = num; break;
           case "tp2": this.config.takeProfit2Percent = num; break;
+          case "tp3": this.config.takeProfit3Percent = num; break;
           case "sl": this.config.stopLossPercent = num; break;
           case "moonbag": this.config.moonbagPercent = Math.max(0, Math.min(50, num)); break;
+          case "breakeven": this.config.breakevenActivationPercent = num; break;
+          case "trailing": this.config.trailingStopPercent = num; break;
+          case "moonbagtrail": this.config.moonbagTrailingStopPercent = num; break;
           case "maxage": this.config.maxPositionAgeMinutes = num; break;
           case "dailyloss": this.config.dailyLossLimitSol = num; break;
           default: return false;

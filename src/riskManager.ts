@@ -13,12 +13,23 @@ export type PositionCloseCallback = (
 /**
  * RiskManager handles:
  * - Position tracking
- * - Position sizing (never risk more than configured max per trade)
- * - Take-profit execution (tiered: sell 50% at TP1, rest at TP2)
+ * - Signal-based position sizing (scale bets by signal strength)
+ * - Breakeven stop (never lose money after a big run-up)
+ * - Trailing stop (lock in gains after TP1)
+ * - Take-profit ladder: TP1 sell 50%, TP2 sell 50%, TP3 sell 50%, keep moonbag
  * - Stop-loss execution
  * - Time-based exits (sell stale positions)
  * - Daily loss limits (stop trading after hitting limit)
  * - Max concurrent position enforcement
+ *
+ * Exit strategy summary:
+ *   Entry → if drops to -SL% → stop loss
+ *   Entry → if rises to +breakeven% → move stop to +5% (covers fees)
+ *   Entry → if rises to +TP1% → sell 50% (recover initial), activate trailing stop
+ *   After TP1 → trailing stop at HWM - trailing% → sell remaining if triggered
+ *   After TP1 → if rises to +TP2% → sell 50% of remaining
+ *   After TP2 → if rises to +TP3% → sell 50% of remaining, rest is moonbag
+ *   Moonbag → trailing stop at HWM - moonbagTrailing% → sell all if triggered
  */
 export class RiskManager {
   private config: BotConfig;
@@ -73,13 +84,40 @@ export class RiskManager {
   }
 
   /**
-   * Open a new position
+   * Calculate position size based on signal score.
+   * Higher confidence signals get larger bets.
+   *
+   *   Score 40-54  → 0.5x base bet (marginal signal)
+   *   Score 55-69  → 1.0x base bet (standard)
+   *   Score 70-84  → 1.5x base bet (strong signal)
+   *   Score 85+    → 2.0x base bet (very strong signal)
+   */
+  calculatePositionSize(signalScore: number): number {
+    const base = this.config.maxBetSol;
+    let multiplier: number;
+
+    if (signalScore >= 85) {
+      multiplier = 2.0;
+    } else if (signalScore >= 70) {
+      multiplier = 1.5;
+    } else if (signalScore >= 55) {
+      multiplier = 1.0;
+    } else {
+      multiplier = 0.5;
+    }
+
+    return parseFloat((base * multiplier).toFixed(4));
+  }
+
+  /**
+   * Open a new position with signal-based sizing
    */
   async openPosition(
     mint: string,
     symbol: string,
     marketCapSol: number,
-    signals: Signal[]
+    signals: Signal[],
+    signalScore: number = 50
   ): Promise<boolean> {
     if (!this.canOpenPosition()) {
       log.warn(
@@ -93,8 +131,8 @@ export class RiskManager {
       return false;
     }
 
-    const amountSol = this.config.maxBetSol;
-    log.trade(`Opening position: ${symbol} (${mint.slice(0, 8)}...) — ${amountSol} SOL`);
+    const amountSol = this.calculatePositionSize(signalScore);
+    log.trade(`Opening position: ${symbol} (${mint.slice(0, 8)}...) — ${amountSol} SOL (score: ${signalScore}, base: ${this.config.maxBetSol})`);
 
     const result = await this.trader.buy(mint, amountSol);
     if (!result.success) {
@@ -109,12 +147,17 @@ export class RiskManager {
       entryMarketCapSol: marketCapSol,
       tokenAmount: 0,
       solInvested: amountSol,
+      solRecovered: 0,
       entryTime: Date.now(),
       currentMarketCapSol: marketCapSol,
       currentPnlPercent: 0,
       highWaterMarkPnl: 0,
       takeProfitHits: 0,
+      breakevenStopActive: false,
+      trailingStopActive: false,
+      isMoonbag: false,
       signals,
+      signalScore,
     };
 
     this.positions.set(mint, position);
@@ -127,45 +170,90 @@ export class RiskManager {
     );
 
     log.trade(
-      `Position opened: ${symbol} @ ${marketCapSol.toFixed(2)} SOL mcap | tx: ${result.signature}`
+      `Position opened: ${symbol} @ ${marketCapSol.toFixed(2)} SOL mcap | ${amountSol} SOL | tx: ${result.signature}`
     );
     return true;
   }
 
   /**
-   * Update position with latest trade data and check TP/SL/time exits
+   * Update position with latest trade data and check all exit conditions.
+   *
+   * Exit priority (checked in order):
+   * 1. Moonbag trailing stop (if isMoonbag)
+   * 2. Trailing stop (if trailingStopActive, after TP1)
+   * 3. Breakeven stop (if breakevenStopActive, PnL dropped to ~0%)
+   * 4. Hard stop loss
+   * 5. Time exit (stale positions not in profit)
+   * 6. Take profit levels (TP1 → TP2 → TP3)
+   * 7. Activate breakeven/trailing flags on the way up
    */
   async onTradeUpdate(trade: PumpPortalTrade) {
     const pos = this.positions.get(trade.mint);
     if (!pos) return;
 
+    // Update current state
     pos.currentMarketCapSol = trade.marketCapSol;
-
     if (pos.entryMarketCapSol > 0) {
       pos.currentPnlPercent =
         ((trade.marketCapSol - pos.entryMarketCapSol) / pos.entryMarketCapSol) * 100;
     }
 
-    // Track high water mark for future trailing stop
+    // Track high water mark
     if (pos.currentPnlPercent > pos.highWaterMarkPnl) {
       pos.highWaterMarkPnl = pos.currentPnlPercent;
     }
 
-    // === Stop Loss ===
-    if (pos.currentPnlPercent <= -this.config.stopLossPercent) {
+    // === 1. Moonbag trailing stop ===
+    if (pos.isMoonbag) {
+      const dropFromHwm = pos.highWaterMarkPnl - pos.currentPnlPercent;
+      if (dropFromHwm >= this.config.moonbagTrailingStopPercent) {
+        log.trade(
+          `MOONBAG TRAILING STOP for ${pos.symbol}: dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
+        );
+        await this.closePosition(pos.mint, 100, "moonbag_trailing_stop");
+        return;
+      }
+      // Moonbags don't check other exits — they ride or die with trailing stop
+      return;
+    }
+
+    // === 2. Trailing stop (after TP1) ===
+    if (pos.trailingStopActive) {
+      const dropFromHwm = pos.highWaterMarkPnl - pos.currentPnlPercent;
+      if (dropFromHwm >= this.config.trailingStopPercent) {
+        log.trade(
+          `TRAILING STOP for ${pos.symbol}: dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
+        );
+        await this.closePosition(pos.mint, 100, "trailing_stop");
+        return;
+      }
+    }
+
+    // === 3. Breakeven stop (activated once PnL crossed threshold, sells if PnL drops to ~0%) ===
+    if (pos.breakevenStopActive && !pos.trailingStopActive && pos.currentPnlPercent <= 5) {
       log.trade(
-        `STOP LOSS triggered for ${pos.symbol}: ${pos.currentPnlPercent.toFixed(1)}%`
+        `BREAKEVEN STOP for ${pos.symbol}: PnL dropped to +${pos.currentPnlPercent.toFixed(1)}% after reaching +${pos.highWaterMarkPnl.toFixed(1)}%`
+      );
+      await this.closePosition(pos.mint, 100, "breakeven_stop");
+      return;
+    }
+
+    // === 4. Hard stop loss ===
+    if (!pos.breakevenStopActive && pos.currentPnlPercent <= -this.config.stopLossPercent) {
+      log.trade(
+        `STOP LOSS for ${pos.symbol}: ${pos.currentPnlPercent.toFixed(1)}%`
       );
       await this.closePosition(pos.mint, 100, "stop_loss");
       return;
     }
 
-    // === Time-based exit ===
+    // === 5. Time-based exit (only if not significantly profitable and no TPs hit) ===
     const ageMinutes = (Date.now() - pos.entryTime) / 1000 / 60;
     if (
       this.config.maxPositionAgeMinutes > 0 &&
       ageMinutes >= this.config.maxPositionAgeMinutes &&
-      pos.currentPnlPercent < 10 // Only time-exit if not significantly profitable
+      pos.takeProfitHits === 0 &&
+      pos.currentPnlPercent < 20
     ) {
       log.trade(
         `TIME EXIT for ${pos.symbol}: ${ageMinutes.toFixed(0)}m old, PnL: ${pos.currentPnlPercent.toFixed(1)}%`
@@ -174,52 +262,81 @@ export class RiskManager {
       return;
     }
 
-    // === Take Profit 1 (sell 50%) ===
+    // === 6. Take Profit Ladder ===
+
+    // TP1: sell 50% → recover initial, activate trailing stop
     if (
       pos.takeProfitHits === 0 &&
       pos.currentPnlPercent >= this.config.takeProfit1Percent
     ) {
       log.trade(
-        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50%`
+        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (recovering initial)`
       );
       const result = await this.trader.sell(pos.mint, 50);
       if (result.success) {
         pos.takeProfitHits = 1;
+        pos.trailingStopActive = true;
+        pos.solRecovered += pos.solInvested * 0.5;
+        pos.solInvested = pos.solInvested * 0.5; // half the position remains
+        log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
       }
       return;
     }
 
-    // === Take Profit 2 (sell remaining, keep moonbag) ===
+    // TP2: sell 50% of remaining
     if (
       pos.takeProfitHits === 1 &&
       pos.currentPnlPercent >= this.config.takeProfit2Percent
     ) {
-      const moonbag = this.config.moonbagPercent;
-      if (moonbag > 0 && moonbag < 100) {
-        // Sell everything except the moonbag
-        const sellPercent = 100 - moonbag;
-        log.trade(
-          `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling ${sellPercent}%, keeping ${moonbag}% moonbag`
-        );
-        const result = await this.trader.sell(pos.mint, sellPercent);
-        if (result.success) {
-          pos.takeProfitHits = 2;
-          // Record partial close in trade history
-          this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_2_moonbag", result.signature);
-          if (this.onPositionClose) {
-            this.onPositionClose(pos, pos.currentMarketCapSol, "take_profit_2_moonbag", result.signature);
-          }
-          // Keep tracking the moonbag position but reduce invested amount
-          pos.solInvested = pos.solInvested * (moonbag / 100);
-        }
-      } else {
-        // No moonbag — sell everything
-        log.trade(
-          `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — closing position`
-        );
-        await this.closePosition(pos.mint, 100, "take_profit_2");
+      log.trade(
+        `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% of remaining`
+      );
+      const result = await this.trader.sell(pos.mint, 50);
+      if (result.success) {
+        pos.takeProfitHits = 2;
+        pos.solRecovered += pos.solInvested * 0.5;
+        pos.solInvested = pos.solInvested * 0.5;
       }
       return;
+    }
+
+    // TP3: sell 50% of remaining, rest becomes moonbag
+    if (
+      pos.takeProfitHits === 2 &&
+      pos.currentPnlPercent >= this.config.takeProfit3Percent
+    ) {
+      const moonbag = this.config.moonbagPercent;
+      // Sell down to moonbag percentage of what's left
+      const sellPercent = 100 - moonbag;
+      log.trade(
+        `TAKE PROFIT 3 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling ${sellPercent}%, keeping ${moonbag}% moonbag`
+      );
+      const result = await this.trader.sell(pos.mint, sellPercent);
+      if (result.success) {
+        pos.takeProfitHits = 3;
+        pos.isMoonbag = true;
+        // Record partial close
+        this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
+        if (this.onPositionClose) {
+          this.onPositionClose(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
+        }
+        pos.solRecovered += pos.solInvested * (sellPercent / 100);
+        pos.solInvested = pos.solInvested * (moonbag / 100);
+        log.trade(`${pos.symbol} is now a moonbag (${moonbag}% remaining). Moonbag trailing stop: ${this.config.moonbagTrailingStopPercent}%`);
+      }
+      return;
+    }
+
+    // === 7. Activate breakeven stop on the way up ===
+    if (
+      !pos.breakevenStopActive &&
+      pos.takeProfitHits === 0 &&
+      pos.currentPnlPercent >= this.config.breakevenActivationPercent
+    ) {
+      pos.breakevenStopActive = true;
+      log.trade(
+        `BREAKEVEN STOP activated for ${pos.symbol}: PnL hit +${pos.currentPnlPercent.toFixed(1)}% — stop moved to +5%`
+      );
     }
   }
 
@@ -230,8 +347,13 @@ export class RiskManager {
     if (this.config.maxPositionAgeMinutes <= 0) return;
 
     for (const pos of this.positions.values()) {
+      if (pos.isMoonbag) continue; // moonbags don't time-exit
       const ageMinutes = (Date.now() - pos.entryTime) / 1000 / 60;
-      if (ageMinutes >= this.config.maxPositionAgeMinutes && pos.currentPnlPercent < 10) {
+      if (
+        ageMinutes >= this.config.maxPositionAgeMinutes &&
+        pos.takeProfitHits === 0 &&
+        pos.currentPnlPercent < 20
+      ) {
         log.trade(
           `TIME EXIT for ${pos.symbol}: ${ageMinutes.toFixed(0)}m old, PnL: ${pos.currentPnlPercent.toFixed(1)}%`
         );
@@ -257,7 +379,7 @@ export class RiskManager {
     const result = await this.trader.sell(mint, percent);
     if (result.success) {
       log.trade(
-        `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | tx: ${result.signature}`
+        `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | Recovered: ${pos.solRecovered.toFixed(4)} SOL | tx: ${result.signature}`
       );
 
       if (percent >= 100) {
@@ -304,10 +426,16 @@ export class RiskManager {
     for (const pos of this.positions.values()) {
       const pnlColor = pos.currentPnlPercent >= 0 ? "+" : "";
       const age = ((Date.now() - pos.entryTime) / 1000 / 60).toFixed(1);
+      const flags = [];
+      if (pos.isMoonbag) flags.push("MOONBAG");
+      if (pos.trailingStopActive) flags.push("TRAILING");
+      if (pos.breakevenStopActive) flags.push("BE-STOP");
+      const flagStr = flags.length > 0 ? ` [${flags.join(",")}]` : "";
       log.info(
         `  ${pos.symbol} | ${pnlColor}${pos.currentPnlPercent.toFixed(1)}% | ` +
         `MCap: ${pos.currentMarketCapSol.toFixed(1)} SOL | ` +
-        `Invested: ${pos.solInvested} SOL | Age: ${age}m | TP: ${pos.takeProfitHits}/2`
+        `Invested: ${pos.solInvested.toFixed(4)} SOL | Recovered: ${pos.solRecovered.toFixed(4)} SOL | ` +
+        `Age: ${age}m | TP: ${pos.takeProfitHits}/3 | HWM: +${pos.highWaterMarkPnl.toFixed(1)}%${flagStr}`
       );
     }
   }
