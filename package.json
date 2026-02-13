@@ -8,23 +8,29 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts"
   },
-  "keywords": ["solana", "trading-bot", "pump-fun"],
+  "keywords": [
+    "solana",
+    "trading-bot",
+    "pump-fun"
+  ],
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@solana/web3.js": "^1.98.0",
     "@solana/spl-token": "^0.4.9",
-    "ws": "^8.18.0",
-    "dotenv": "^16.4.7",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^5.0.0",
     "chalk": "^4.1.2",
-    "bs58": "^5.0.0"
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^0.67.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/node-telegram-bot-api": "^0.64.13",
     "@types/ws": "^8.5.13",
-    "typescript": "^5.7.0",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
   }
 }

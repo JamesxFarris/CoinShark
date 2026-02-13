@@ -6,9 +6,11 @@ import {
   PumpPortalTrade,
   PumpPortalNewToken,
 } from "./types";
+import { KolDiscovery } from "./kolDiscovery";
 import { log } from "./logger";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const TOTAL_BONDING_CURVE_TOKENS = 800_000_000;
 
 interface TradeRecord {
   trader: string;
@@ -28,34 +30,35 @@ interface TokenState {
   currentMarketCapSol: number;
   marketCapAtFirstSeen: number;
   kolBuys: Set<string>;
+  bondingCurvePercent: number;
+  vTokensInBondingCurve: number;
 }
 
 /**
  * SignalEngine evaluates whether a token has genuine momentum worth trading.
  *
  * Signal types:
- * - kol_buy: A tracked KOL wallet bought the token
+ * - kol_buy: A tracked KOL wallet bought the token (weighted by KOL score)
  * - volume_spike: Trading volume exceeded threshold in a rolling window
  * - momentum: Buy/sell ratio and unique buyer count indicate organic growth
  * - trend: Market cap is growing steadily without sudden spikes (healthier)
+ * - bonding_curve: Token is approaching graduation (high demand)
  */
 export class SignalEngine {
   private config: BotConfig;
-  private kolWallets: Set<string>;
+  private kolDiscovery: KolDiscovery;
   private tokenStates: Map<string, TokenState> = new Map();
 
-  constructor(config: BotConfig) {
+  constructor(config: BotConfig, kolDiscovery: KolDiscovery) {
     this.config = config;
-    this.kolWallets = new Set(config.kolWallets);
-    if (this.kolWallets.size > 0) {
-      log.kol(`Tracking ${this.kolWallets.size} KOL wallets`);
-    }
+    this.kolDiscovery = kolDiscovery;
   }
 
   /**
    * Register a new token we're observing
    */
   registerToken(token: PumpPortalNewToken) {
+    const bondingCurvePercent = this.calculateBondingCurvePercent(token.vTokensInBondingCurve);
     this.tokenStates.set(token.mint, {
       mint: token.mint,
       symbol: token.symbol,
@@ -65,7 +68,19 @@ export class SignalEngine {
       currentMarketCapSol: token.marketCapSol,
       marketCapAtFirstSeen: token.marketCapSol,
       kolBuys: new Set(),
+      bondingCurvePercent,
+      vTokensInBondingCurve: token.vTokensInBondingCurve,
     });
+  }
+
+  /**
+   * Calculate bonding curve completion percentage.
+   * 800M tokens on the curve; as tokens are bought, vTokens decreases.
+   */
+  private calculateBondingCurvePercent(vTokensInCurve: number): number {
+    if (vTokensInCurve <= 0) return 100;
+    const bought = TOTAL_BONDING_CURVE_TOKENS - vTokensInCurve;
+    return Math.max(0, Math.min(100, (bought / TOTAL_BONDING_CURVE_TOKENS) * 100));
   }
 
   /**
@@ -74,7 +89,6 @@ export class SignalEngine {
   processTrade(trade: PumpPortalTrade): Signal[] {
     let state = this.tokenStates.get(trade.mint);
     if (!state) {
-      // Auto-register if we see a trade for a token we haven't seen yet
       state = {
         mint: trade.mint,
         symbol: "???",
@@ -84,9 +98,15 @@ export class SignalEngine {
         currentMarketCapSol: trade.marketCapSol,
         marketCapAtFirstSeen: trade.marketCapSol,
         kolBuys: new Set(),
+        bondingCurvePercent: this.calculateBondingCurvePercent(trade.vTokensInBondingCurve),
+        vTokensInBondingCurve: trade.vTokensInBondingCurve,
       };
       this.tokenStates.set(trade.mint, state);
     }
+
+    // Update bonding curve progress
+    state.vTokensInBondingCurve = trade.vTokensInBondingCurve;
+    state.bondingCurvePercent = this.calculateBondingCurvePercent(trade.vTokensInBondingCurve);
 
     // Record the trade
     state.trades.push({
@@ -106,19 +126,24 @@ export class SignalEngine {
     // Check for signals
     const signals: Signal[] = [];
 
-    // KOL buy signal
-    if (trade.txType === "buy" && this.kolWallets.has(trade.traderPublicKey)) {
+    // KOL buy signal (with performance-weighted strength)
+    if (trade.txType === "buy" && this.kolDiscovery.isKol(trade.traderPublicKey)) {
       state.kolBuys.add(trade.traderPublicKey);
+      const kolWeight = this.kolDiscovery.getKolWeight(trade.traderPublicKey);
+      const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
+      const baseStrength = Math.min(100, state.kolBuys.size * 40);
       const signal: Signal = {
         type: "kol_buy",
         mint: trade.mint,
-        strength: Math.min(100, state.kolBuys.size * 40),
-        details: `KOL ${trade.traderPublicKey.slice(0, 8)}... bought ${trade.solAmount.toFixed(2)} SOL worth`,
+        strength: Math.min(100, Math.round(baseStrength * kolWeight)),
+        details: `KOL ${kol?.alias ?? trade.traderPublicKey.slice(0, 8)}... bought ${trade.solAmount.toFixed(2)} SOL (score: ${kol?.score ?? "??"})`,
         timestamp: Date.now(),
       };
       signals.push(signal);
+      this.kolDiscovery.getKol(trade.traderPublicKey)!.lastActive = Date.now();
+      this.kolDiscovery.save();
       log.kol(
-        `${state.symbol}: KOL buy detected — ${trade.traderPublicKey.slice(0, 8)}... (${trade.solAmount.toFixed(2)} SOL)`
+        `${state.symbol}: KOL buy — ${kol?.alias ?? trade.traderPublicKey.slice(0, 8)}... (${trade.solAmount.toFixed(2)} SOL, weight: ${kolWeight.toFixed(1)}x)`
       );
     }
 
@@ -201,8 +226,6 @@ export class SignalEngine {
 
     // Trend signal — steady growth (not a pump-and-dump spike)
     if (priceChangePercent5m > 10 && priceChangePercent5m < 200) {
-      // Between 10% and 200% growth in 5 min is "trending"
-      // Above 200% is suspicious pump territory
       const strength = Math.min(100, priceChangePercent5m);
       signals.push({
         type: "trend",
@@ -213,13 +236,35 @@ export class SignalEngine {
       });
     }
 
-    // KOL accumulation signal
+    // KOL accumulation signal (weighted by KOL scores)
     if (state.kolBuys.size >= this.config.minKolBuys) {
+      let totalWeight = 0;
+      for (const kolAddr of state.kolBuys) {
+        totalWeight += this.kolDiscovery.getKolWeight(kolAddr);
+      }
+      const weightedStrength = Math.min(100, Math.round(totalWeight * 35));
       signals.push({
         type: "kol_buy",
         mint,
-        strength: Math.min(100, state.kolBuys.size * 40),
-        details: `${state.kolBuys.size} tracked KOLs have bought`,
+        strength: weightedStrength,
+        details: `${state.kolBuys.size} KOLs bought (weighted strength: ${weightedStrength})`,
+        timestamp: now,
+      });
+    }
+
+    // Bonding curve signal — tokens with good progress are in demand
+    if (
+      state.bondingCurvePercent >= this.config.minBondingCurvePercent &&
+      state.bondingCurvePercent <= this.config.maxBondingCurvePercent
+    ) {
+      // Tokens at 40-70% are the sweet spot (strong demand, not yet graduated)
+      const distFromOptimal = Math.abs(state.bondingCurvePercent - 55);
+      const strength = Math.min(100, Math.max(20, 80 - distFromOptimal));
+      signals.push({
+        type: "bonding_curve",
+        mint,
+        strength,
+        details: `Bonding curve: ${state.bondingCurvePercent.toFixed(1)}% complete`,
         timestamp: now,
       });
     }
@@ -229,15 +274,18 @@ export class SignalEngine {
     for (const signal of signals) {
       switch (signal.type) {
         case "kol_buy":
-          aggregateScore += signal.strength * 0.35; // KOL buys weighted highest
+          aggregateScore += signal.strength * 0.30;
           break;
         case "volume_spike":
-          aggregateScore += signal.strength * 0.25;
+          aggregateScore += signal.strength * 0.20;
           break;
         case "momentum":
-          aggregateScore += signal.strength * 0.25;
+          aggregateScore += signal.strength * 0.20;
           break;
         case "trend":
+          aggregateScore += signal.strength * 0.15;
+          break;
+        case "bonding_curve":
           aggregateScore += signal.strength * 0.15;
           break;
       }
@@ -249,7 +297,15 @@ export class SignalEngine {
       state.currentMarketCapSol < this.config.minMarketCapSol ||
       state.currentMarketCapSol > this.config.maxMarketCapSol
     ) {
-      aggregateScore = 0; // Outside our trading range
+      aggregateScore = 0;
+    }
+
+    // Bonding curve bounds check
+    if (
+      state.bondingCurvePercent < this.config.minBondingCurvePercent ||
+      state.bondingCurvePercent > this.config.maxBondingCurvePercent
+    ) {
+      aggregateScore = 0;
     }
 
     return {
@@ -259,6 +315,7 @@ export class SignalEngine {
       uniqueSellersLast5m: recentSellers.size,
       buyToSellRatio,
       priceChangePercent5m,
+      bondingCurvePercent: state.bondingCurvePercent,
       kolBuys: Array.from(state.kolBuys),
       signals,
       aggregateScore: Math.round(aggregateScore),
@@ -274,12 +331,10 @@ export class SignalEngine {
       return { shouldBuy: false, momentum: null, reason: "No data available" };
     }
 
-    // Must have at least one signal
     if (momentum.signals.length === 0) {
       return { shouldBuy: false, momentum, reason: "No signals detected" };
     }
 
-    // Score threshold
     if (momentum.aggregateScore < 40) {
       return {
         shouldBuy: false,
@@ -288,7 +343,6 @@ export class SignalEngine {
       };
     }
 
-    // Volume check
     if (momentum.volumeLast5m < this.config.min5mVolumeSol) {
       return {
         shouldBuy: false,
@@ -297,7 +351,6 @@ export class SignalEngine {
       };
     }
 
-    // Buyer count check
     if (momentum.uniqueBuyersLast5m < this.config.min5mBuyers) {
       return {
         shouldBuy: false,
@@ -314,18 +367,17 @@ export class SignalEngine {
   }
 
   /**
-   * Get all KOL wallet addresses being tracked
+   * Get the bonding curve percent for a token
    */
-  getKolWallets(): string[] {
-    return Array.from(this.kolWallets);
+  getBondingCurvePercent(mint: string): number {
+    return this.tokenStates.get(mint)?.bondingCurvePercent ?? 0;
   }
 
   /**
-   * Add a KOL wallet to track
+   * Get all KOL wallet addresses being tracked
    */
-  addKolWallet(address: string) {
-    this.kolWallets.add(address);
-    log.kol(`Added KOL wallet: ${address.slice(0, 8)}...`);
+  getKolWallets(): string[] {
+    return this.kolDiscovery.getKolAddresses();
   }
 
   /**

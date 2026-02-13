@@ -16,6 +16,7 @@ interface TokenTradeHistory {
   uniqueSellers: Set<string>;
   creatorWallet: string;
   createdAt: number;
+  initialBuyPercent: number;
 }
 
 /**
@@ -46,12 +47,16 @@ export class ScamFilter {
    * Register a new token for tracking
    */
   registerToken(token: PumpPortalNewToken) {
+    const initialBuyPercent = token.vTokensInBondingCurve > 0
+      ? (token.initialBuy / token.vTokensInBondingCurve) * 100
+      : 0;
     this.tokenHistories.set(token.mint, {
       trades: [],
       uniqueBuyers: new Set(),
       uniqueSellers: new Set(),
       creatorWallet: token.traderPublicKey,
       createdAt: Date.now(),
+      initialBuyPercent,
     });
 
     // Track how many tokens this creator has launched
@@ -206,9 +211,20 @@ export class ScamFilter {
       reasons.push("Bundled launch detected (many buys from fresh wallets at creation)");
     }
 
+    // === Check 8: Micro-buy swarming (fake activity from tiny buys) ===
+    const microBuySwarming = this.detectMicroBuySwarming(history);
+    if (microBuySwarming) {
+      reasons.push("Micro-buy swarming detected (many tiny buys to fake activity)");
+    }
+
+    // === Check 9: Creator initial supply grab ===
+    if (history.initialBuyPercent > 5) {
+      reasons.push(`Creator grabbed ${history.initialBuyPercent.toFixed(1)}% of supply at launch`);
+    }
+
     // === Scoring ===
     const holderDistScore = Math.max(0, 100 - topHolderConcentration);
-    const volumeScore = suspectedWashTrading ? 20 : bundledLaunch ? 40 : 80;
+    const volumeScore = suspectedWashTrading ? 20 : bundledLaunch ? 30 : microBuySwarming ? 40 : 80;
     const creatorScore = creatorIsSerial ? 10 : 70;
 
     // Penalties
@@ -322,6 +338,38 @@ export class ScamFilter {
     );
     if (creatorBoughtAtLaunch && uniqueLaunchBuyers.size >= 3) {
       return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Detect micro-buy swarming: many tiny buys (< 0.01 SOL) from different wallets
+   * to simulate organic activity. Common bot pattern.
+   */
+  private detectMicroBuySwarming(history: TokenTradeHistory): boolean {
+    const recentBuys = history.trades.filter(t => t.action === "buy");
+    if (recentBuys.length < 10) return false;
+
+    const microBuys = recentBuys.filter(t => t.solAmount < 0.01);
+    const microBuyWallets = new Set(microBuys.map(t => t.trader));
+
+    // If >50% of buys are micro-buys from many different wallets, it's suspicious
+    if (microBuys.length > recentBuys.length * 0.5 && microBuyWallets.size >= 8) {
+      return true;
+    }
+
+    // Also check for rapid-fire buys (>20 buys in 30 seconds from different wallets)
+    if (recentBuys.length >= 20) {
+      const sorted = [...recentBuys].sort((a, b) => a.timestamp - b.timestamp);
+      for (let i = 0; i <= sorted.length - 20; i++) {
+        const window = sorted.slice(i, i + 20);
+        const timeSpan = window[window.length - 1].timestamp - window[0].timestamp;
+        const uniqueTraders = new Set(window.map(t => t.trader)).size;
+        if (timeSpan < 30_000 && uniqueTraders >= 15) {
+          return true;
+        }
+      }
     }
 
     return false;

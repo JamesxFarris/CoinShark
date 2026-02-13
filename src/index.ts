@@ -3,7 +3,7 @@ import { CoinSharkBot } from "./bot";
 import { log, setLogLevel, LogLevel } from "./logger";
 
 async function main() {
-  log.banner("CoinShark v1.0.0");
+  log.banner("CoinShark v2.0.0");
   log.info("Loading configuration...");
 
   const config = loadConfig();

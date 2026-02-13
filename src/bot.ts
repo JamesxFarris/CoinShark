@@ -1,10 +1,13 @@
-import { BotConfig, PumpPortalNewToken, PumpPortalTrade } from "./types";
+import { BotConfig, PumpPortalNewToken, PumpPortalTrade, Position } from "./types";
 import { WalletManager } from "./wallet";
 import { TokenScanner } from "./scanner";
 import { ScamFilter } from "./scamFilter";
 import { SignalEngine } from "./signalEngine";
 import { Trader } from "./trader";
 import { RiskManager } from "./riskManager";
+import { KolDiscovery } from "./kolDiscovery";
+import { TradeHistory } from "./tradeHistory";
+import { TelegramUI, TelegramBotCallbacks } from "./telegram";
 import { log } from "./logger";
 
 
@@ -13,12 +16,12 @@ import { log } from "./logger";
  *
  * Pipeline: New Token → Scam Filter → Watch → Signal Engine → Trade Decision → Risk Management
  *
- * 1. Scanner detects new tokens on Pump.fun via WebSocket
- * 2. Scam filter does a quick reject on obvious scams
- * 3. Surviving tokens get watched for trading activity
- * 4. Signal engine evaluates momentum (KOL buys, volume, trends)
- * 5. If signals are strong enough, risk manager opens a position
- * 6. Risk manager monitors positions for TP/SL
+ * Features:
+ * - Telegram UI for control & alerts
+ * - KOL discovery with performance scoring
+ * - Trade history with analytics
+ * - Bonding curve tracking
+ * - Time-based exits & daily loss limits
  */
 export class CoinSharkBot {
   private config: BotConfig;
@@ -28,10 +31,14 @@ export class CoinSharkBot {
   private signalEngine: SignalEngine;
   private trader: Trader;
   private riskManager: RiskManager;
+  private kolDiscovery: KolDiscovery;
+  private tradeHistory: TradeHistory;
+  private telegram: TelegramUI | null = null;
 
   private watchedTokens: Set<string> = new Set();
   private tokenSymbols: Map<string, string> = new Map();
   private isRunning = false;
+  private autoTradingEnabled = true;
   private stats = {
     tokensScanned: 0,
     tokensRejected: 0,
@@ -47,24 +54,46 @@ export class CoinSharkBot {
     this.wallet = new WalletManager(config.solanaRpcUrl, config.privateKey);
     this.scanner = new TokenScanner();
     this.scamFilter = new ScamFilter(this.wallet.getConnection(), config);
-    this.signalEngine = new SignalEngine(config);
+    this.kolDiscovery = new KolDiscovery(config.kolWallets);
+    this.tradeHistory = new TradeHistory();
+    this.signalEngine = new SignalEngine(config, this.kolDiscovery);
     this.trader = new Trader(config, this.wallet);
-    this.riskManager = new RiskManager(config, this.trader);
+    this.riskManager = new RiskManager(config, this.trader, this.tradeHistory);
+
+    // Wire up position close callback for Telegram alerts & KOL scoring
+    this.riskManager.onPositionClose = (pos, exitMcap, reason, sig) =>
+      this.onPositionClosed(pos, exitMcap, reason, sig);
+
+    // Initialize Telegram if configured
+    if (config.telegramBotToken && config.telegramChatId) {
+      this.telegram = new TelegramUI(config.telegramBotToken, config.telegramChatId);
+      this.telegram.setCallbacks(this.createTelegramCallbacks());
+    }
   }
 
   async start() {
-    log.banner("CoinShark — Solana Pump.fun Trading Bot");
+    log.banner("CoinShark v2.0 — Solana Pump.fun Trading Bot");
 
     // Print wallet info
     await this.wallet.printStatus();
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
     log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | SL: -${this.config.stopLossPercent}%`);
+    log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
+    log.info(`Daily loss limit: ${this.config.dailyLossLimitSol} SOL`);
+    log.info(`Bonding curve range: ${this.config.minBondingCurvePercent}-${this.config.maxBondingCurvePercent}%`);
 
-    if (this.config.kolWallets.length > 0) {
-      log.kol(`Tracking ${this.config.kolWallets.length} KOL wallets`);
+    const kolCount = this.kolDiscovery.getAllKols().length;
+    if (kolCount > 0) {
+      log.kol(`Tracking ${kolCount} KOL wallets`);
     } else {
       log.warn("No KOL wallets configured — KOL signal disabled");
+    }
+
+    if (this.telegram) {
+      log.info("Telegram bot connected");
+    } else {
+      log.warn("Telegram not configured — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID");
     }
 
     // Wire up event handlers
@@ -92,6 +121,13 @@ export class CoinSharkBot {
     this.startPeriodicTasks();
 
     log.info("Bot is running. Waiting for tokens...\n");
+
+    if (this.telegram) {
+      const balance = await this.wallet.getBalance();
+      await this.telegram.send(
+        `<b>CoinShark started</b>\nBalance: ${balance.toFixed(4)} SOL\nKOLs: ${kolCount}\nMax bet: ${this.config.maxBetSol} SOL`
+      );
+    }
   }
 
   async stop() {
@@ -103,6 +139,11 @@ export class CoinSharkBot {
     if (this.riskManager.positionCount > 0) {
       log.warn(`Closing ${this.riskManager.positionCount} open positions...`);
       await this.riskManager.closeAll("shutdown");
+    }
+
+    if (this.telegram) {
+      await this.telegram.send("<b>CoinShark stopped</b>");
+      this.telegram.stop();
     }
 
     this.printStats();
@@ -160,6 +201,9 @@ export class CoinSharkBot {
       return;
     }
 
+    // Skip trade evaluation if auto-trading is disabled
+    if (!this.autoTradingEnabled) return;
+
     // Check if we should open a new position
     if (!this.riskManager.canOpenPosition()) return;
 
@@ -174,7 +218,6 @@ export class CoinSharkBot {
       log.scam(
         `BLOCKED ${this.tokenSymbols.get(trade.mint)}: ${scamResult.reasons.join("; ")}`
       );
-      // Stop watching this scam token
       this.unwatchToken(trade.mint);
       return;
     }
@@ -194,6 +237,48 @@ export class CoinSharkBot {
 
     if (opened) {
       this.stats.tradesExecuted++;
+      // Send Telegram alert
+      if (this.telegram) {
+        await this.telegram.alertBuy(
+          symbol, trade.mint, this.config.maxBetSol,
+          trade.marketCapSol,
+          momentum.signals.map(s => s.type)
+        );
+      }
+    }
+  }
+
+  /**
+   * Called when a position is closed (for alerts & KOL scoring)
+   */
+  private async onPositionClosed(
+    position: Position,
+    exitMarketCapSol: number,
+    reason: string,
+    signature?: string
+  ) {
+    const pnlPercent = position.entryMarketCapSol > 0
+      ? ((exitMarketCapSol - position.entryMarketCapSol) / position.entryMarketCapSol) * 100
+      : 0;
+    const pnlSol = position.solInvested * (pnlPercent / 100);
+
+    // Update KOL scores based on trade outcome
+    for (const signal of position.signals) {
+      if (signal.type === "kol_buy") {
+        // Extract KOL addresses from the signal details
+        for (const kolAddr of this.kolDiscovery.getKolAddresses()) {
+          // If this KOL contributed to the signal
+          const kol = this.kolDiscovery.getKol(kolAddr);
+          if (kol && kol.lastActive >= position.entryTime - 60000) {
+            this.kolDiscovery.recordSignalOutcome(kolAddr, pnlPercent);
+          }
+        }
+      }
+    }
+
+    // Telegram sell alert
+    if (this.telegram) {
+      await this.telegram.alertSell(position.symbol, pnlPercent, pnlSol, reason);
     }
   }
 
@@ -216,18 +301,26 @@ export class CoinSharkBot {
       this.riskManager.printPositions();
     }, 2 * 60 * 1000);
 
+    // Check time-based exits every minute
+    setInterval(() => {
+      if (!this.isRunning) return;
+      this.riskManager.checkTimeExits();
+    }, 60 * 1000);
+
+    // Check daily loss limit every minute
+    setInterval(() => {
+      if (!this.isRunning) return;
+      this.riskManager.checkDailyLossLimit();
+    }, 60 * 1000);
+
     // Cleanup old data every 5 minutes
     setInterval(() => {
       if (!this.isRunning) return;
       this.scamFilter.cleanup();
       this.signalEngine.cleanup();
 
-      // Unwatch tokens we've been watching for too long without buying
-      const MAX_WATCH_TIME = 15 * 60 * 1000; // 15 min
-      // We don't have timestamps for watch start, so just limit total count
       if (this.watchedTokens.size > 200) {
         log.info(`Pruning watched tokens (${this.watchedTokens.size} → keeping recent)`);
-        // Just clear old ones — the important ones (with positions) are tracked separately
         const toRemove = Array.from(this.watchedTokens).slice(
           0,
           this.watchedTokens.size - 100
@@ -247,8 +340,81 @@ export class CoinSharkBot {
     }, 10 * 60 * 1000);
   }
 
+  /**
+   * Create callbacks for the Telegram bot to interact with the main bot
+   */
+  private createTelegramCallbacks(): TelegramBotCallbacks {
+    return {
+      getPositions: () => this.riskManager.getPositions(),
+      getBalance: () => this.wallet.getBalance(),
+      getWalletAddress: () => this.wallet.address,
+
+      manualBuy: async (mint: string) => {
+        const result = await this.trader.buy(mint, this.config.maxBetSol);
+        if (result.success) {
+          this.stats.tradesExecuted++;
+        }
+        return result;
+      },
+
+      manualSell: async (mint: string) => {
+        if (this.riskManager.hasPosition(mint)) {
+          const success = await this.riskManager.closePosition(mint, 100, "manual_telegram");
+          return { success };
+        }
+        // Direct sell if no tracked position
+        return this.trader.sell(mint, 100);
+      },
+
+      addKol: (address: string, alias?: string) => {
+        this.kolDiscovery.addKol(address, alias);
+        this.scanner.watchAccount(address);
+      },
+
+      removeKol: (address: string) => {
+        return this.kolDiscovery.removeKol(address);
+      },
+
+      getKolList: () => this.kolDiscovery.formatKolList(),
+      getStats: () => this.tradeHistory.formatStats(),
+      getRecentTrades: () => this.tradeHistory.formatRecentTrades(),
+      isRunning: () => this.autoTradingEnabled,
+
+      pauseTrading: () => {
+        this.autoTradingEnabled = false;
+        log.warn("Auto-trading PAUSED via Telegram");
+      },
+
+      resumeTrading: () => {
+        this.autoTradingEnabled = true;
+        log.info("Auto-trading RESUMED via Telegram");
+      },
+
+      getConfig: () => this.config,
+
+      updateConfig: (key: string, value: string) => {
+        const num = parseFloat(value);
+        if (isNaN(num)) return false;
+
+        switch (key) {
+          case "bet": this.config.maxBetSol = num; break;
+          case "maxpos": this.config.maxPositions = num; break;
+          case "tp1": this.config.takeProfit1Percent = num; break;
+          case "tp2": this.config.takeProfit2Percent = num; break;
+          case "sl": this.config.stopLossPercent = num; break;
+          case "maxage": this.config.maxPositionAgeMinutes = num; break;
+          case "dailyloss": this.config.dailyLossLimitSol = num; break;
+          default: return false;
+        }
+        log.info(`Config updated via Telegram: ${key} = ${value}`);
+        return true;
+      },
+    };
+  }
+
   printStats() {
     const uptime = ((Date.now() - this.stats.startTime) / 1000 / 60).toFixed(1);
+    const historyStats = this.tradeHistory.getStats();
     log.info("--- CoinShark Stats ---");
     log.info(`  Uptime: ${uptime} min`);
     log.info(`  Tokens scanned: ${this.stats.tokensScanned}`);
@@ -256,5 +422,11 @@ export class CoinSharkBot {
     log.info(`  Tokens watched: ${this.stats.tokensWatched}`);
     log.info(`  Trades executed: ${this.stats.tradesExecuted}`);
     log.info(`  Open positions: ${this.riskManager.positionCount}/${this.config.maxPositions}`);
+    if (historyStats.totalTrades > 0) {
+      log.info(`  Win rate: ${historyStats.winRate.toFixed(1)}% (${historyStats.wins}W/${historyStats.losses}L)`);
+      log.info(`  Total PnL: ${historyStats.totalPnlSol >= 0 ? "+" : ""}${historyStats.totalPnlSol.toFixed(4)} SOL`);
+      log.info(`  Today PnL: ${historyStats.dailyPnlSol >= 0 ? "+" : ""}${historyStats.dailyPnlSol.toFixed(4)} SOL`);
+    }
+    log.info(`  Auto-trading: ${this.autoTradingEnabled ? "ON" : "PAUSED"}`);
   }
 }

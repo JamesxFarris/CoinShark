@@ -51,5 +51,17 @@ export function loadConfig(): BotConfig {
     min5mBuyers: envNum("MIN_5M_BUYERS", 10),
     minMarketCapSol: envNum("MIN_MARKET_CAP_SOL", 10),
     maxMarketCapSol: envNum("MAX_MARKET_CAP_SOL", 500),
+
+    // Bonding Curve
+    minBondingCurvePercent: envNum("MIN_BONDING_CURVE_PERCENT", 5),
+    maxBondingCurvePercent: envNum("MAX_BONDING_CURVE_PERCENT", 85),
+
+    // Risk Management
+    maxPositionAgeMinutes: envNum("MAX_POSITION_AGE_MINUTES", 30),
+    dailyLossLimitSol: envNum("DAILY_LOSS_LIMIT_SOL", 0.5),
+
+    // Telegram
+    telegramBotToken: envStr("TELEGRAM_BOT_TOKEN"),
+    telegramChatId: envStr("TELEGRAM_CHAT_ID"),
   };
 }

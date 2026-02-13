@@ -57,7 +57,7 @@ export interface HolderInfo {
 
 // === Signal Engine ===
 
-export type SignalType = "kol_buy" | "volume_spike" | "momentum" | "trend";
+export type SignalType = "kol_buy" | "volume_spike" | "momentum" | "trend" | "bonding_curve";
 
 export interface Signal {
   type: SignalType;
@@ -74,6 +74,7 @@ export interface TokenMomentum {
   uniqueSellersLast5m: number;
   buyToSellRatio: number;
   priceChangePercent5m: number;
+  bondingCurvePercent: number;
   kolBuys: string[]; // KOL wallet addresses that bought
   signals: Signal[];
   aggregateScore: number; // 0-100
@@ -110,8 +111,55 @@ export interface Position {
   entryTime: number;
   currentMarketCapSol: number;
   currentPnlPercent: number;
+  highWaterMarkPnl: number; // highest PnL seen (for trailing stop)
   takeProfitHits: number; // how many TP levels hit
   signals: Signal[]; // signals that triggered the buy
+}
+
+// === KOL Discovery & Scoring ===
+
+export interface KolProfile {
+  address: string;
+  alias: string;
+  addedAt: number;
+  totalSignals: number;
+  profitableSignals: number;
+  totalPnlPercent: number;
+  winRate: number; // 0-100
+  score: number; // 0-100
+  lastActive: number;
+}
+
+// === Trade History ===
+
+export interface TradeHistoryEntry {
+  id: string;
+  timestamp: number;
+  mint: string;
+  symbol: string;
+  action: "buy" | "sell";
+  solAmount: number;
+  marketCapSol: number;
+  signature?: string;
+  entryMarketCapSol?: number;
+  exitMarketCapSol?: number;
+  pnlPercent?: number;
+  pnlSol?: number;
+  holdDurationMs?: number;
+  exitReason?: string;
+  triggerSignals?: string[];
+}
+
+export interface BotStats {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalPnlSol: number;
+  bestTradePnl: number;
+  worstTradePnl: number;
+  avgHoldTimeMs: number;
+  dailyPnlSol: number;
 }
 
 // === Config ===
@@ -149,6 +197,18 @@ export interface BotConfig {
   min5mBuyers: number;
   minMarketCapSol: number;
   maxMarketCapSol: number;
+
+  // Bonding Curve
+  minBondingCurvePercent: number;
+  maxBondingCurvePercent: number;
+
+  // Risk Management
+  maxPositionAgeMinutes: number;
+  dailyLossLimitSol: number;
+
+  // Telegram
+  telegramBotToken: string;
+  telegramChatId: string;
 }
 
 // === WebSocket Messages ===
