@@ -15,6 +15,20 @@ async function main() {
     process.exit(1);
   }
 
+  // Warn about public RPC
+  if (config.solanaRpcUrl.includes("api.mainnet-beta.solana.com")) {
+    log.warn("Using the public Solana RPC — this is heavily rate-limited and WILL cause issues.");
+    log.warn("Sign up for a free Helius key at https://helius.dev (1M credits/month).");
+    log.warn("Then set SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=YOUR_KEY");
+  }
+
+  // Check for placeholder Helius key
+  if (config.solanaRpcUrl.includes("YOUR_HELIUS_API_KEY")) {
+    log.error("Replace YOUR_HELIUS_API_KEY in SOLANA_RPC_URL with your actual Helius API key.");
+    log.info("Sign up free at https://helius.dev to get one.");
+    process.exit(1);
+  }
+
   // Enable debug logging if requested
   if (process.argv.includes("--debug")) {
     setLogLevel(LogLevel.DEBUG);

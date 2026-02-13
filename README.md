@@ -46,9 +46,10 @@ npm install
 # Copy config template
 cp .env.example .env
 
-# Edit .env with your settings:
+# Get a free Helius RPC key at https://helius.dev (1M credits/month, 10 RPS)
+# Then edit .env with your settings:
 # - SOLANA_PRIVATE_KEY (required)
-# - SOLANA_RPC_URL (recommended: use a paid RPC for production)
+# - SOLANA_RPC_URL → https://mainnet.helius-rpc.com/?api-key=YOUR_KEY
 # - KOL_WALLETS (comma-separated wallet addresses to track)
 # - Trading parameters (bet size, TP/SL levels, etc.)
 
