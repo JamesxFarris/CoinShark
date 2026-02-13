@@ -53,6 +53,7 @@ export class TelegramUI {
   constructor(token: string, chatId: string) {
     this.chatId = chatId;
     this.bot = new TelegramBot(token, { polling: true });
+    this.registerCommandMenu();
     this.registerCommands();
     log.info("Telegram bot started");
   }
@@ -108,6 +109,26 @@ export class TelegramUI {
 
   stop() {
     this.bot.stopPolling();
+  }
+
+  private registerCommandMenu() {
+    this.bot.setMyCommands([
+      { command: "start", description: "Welcome & command list" },
+      { command: "status", description: "Bot status & balance" },
+      { command: "positions", description: "Open positions with PnL" },
+      { command: "buy", description: "Manual buy: /buy <mint>" },
+      { command: "sell", description: "Manual sell: /sell <mint>" },
+      { command: "kols", description: "List tracked KOL wallets" },
+      { command: "addkol", description: "Add KOL: /addkol <wallet> [alias]" },
+      { command: "removekol", description: "Remove KOL: /removekol <wallet>" },
+      { command: "stats", description: "Win rate, PnL, trade stats" },
+      { command: "history", description: "Recent trade history" },
+      { command: "pause", description: "Pause auto-trading" },
+      { command: "resume", description: "Resume auto-trading" },
+      { command: "config", description: "Show current config" },
+      { command: "set", description: "Change setting: /set <key> <value>" },
+      { command: "balance", description: "Wallet SOL balance" },
+    ]).catch(err => log.warn(`Failed to set Telegram command menu: ${err.message}`));
   }
 
   private isAuthorized(chatId: number): boolean {
