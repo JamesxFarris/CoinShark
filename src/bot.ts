@@ -225,11 +225,13 @@ export class CoinSharkBot {
     this.scamFilter.recordTrade(trade);
     const newSignals = this.signalEngine.processTrade(trade);
 
+    // Resolve symbol — use || (not ??) so empty strings also fall back
+    const symbol = this.tokenSymbols.get(trade.mint) || trade.mint.slice(0, 8);
+
     // Log significant signals
     for (const signal of newSignals) {
       log.signal(
-        `${this.tokenSymbols.get(trade.mint) ?? trade.mint.slice(0, 8)}: ` +
-        `[${signal.type}] strength=${signal.strength} — ${signal.details}`
+        `${symbol}: [${signal.type}] strength=${signal.strength} — ${signal.details}`
       );
     }
 
@@ -249,7 +251,6 @@ export class CoinSharkBot {
     if (!shouldBuy || !momentum) return;
 
     // Run full scam analysis before committing real money
-    const symbol = this.tokenSymbols.get(trade.mint) ?? trade.mint.slice(0, 8);
     log.info(`Evaluating ${symbol} for purchase...`);
     const scamResult = await this.scamFilter.analyze(trade.mint);
 
@@ -432,10 +433,11 @@ export class CoinSharkBot {
       manualSell: async (mint: string) => {
         if (this.riskManager.hasPosition(mint)) {
           const success = await this.riskManager.closePosition(mint, 100, "manual_telegram");
-          return { success };
+          return { success, error: success ? undefined : "Sell transaction failed — check logs for details" };
         }
         // Direct sell if no tracked position
-        return this.trader.sell(mint, 100);
+        const result = this.trader.sell(mint, 100);
+        return result;
       },
 
       addKol: (address: string, alias?: string) => {

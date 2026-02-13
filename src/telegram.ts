@@ -403,12 +403,24 @@ export class TelegramUI {
         // Sell from button
         if (data.startsWith("sell:")) {
           const mint = data.slice(5);
-          await this.bot.answerCallbackQuery(query.id, { text: `Selling ${mint.slice(0, 8)}...` });
+          // Try to get the token symbol from positions
+          const positions = this.callbacks.getPositions();
+          const pos = positions.find(p => p.mint === mint);
+          const tokenName = pos?.symbol || mint.slice(0, 8);
+          await this.bot.answerCallbackQuery(query.id, { text: `Selling ${tokenName}...` });
           const result = await this.callbacks.manualSell(mint);
           if (result.success) {
-            await this.bot.sendMessage(chatId, `Sell executed for <code>${mint.slice(0, 12)}...</code>`, { parse_mode: "HTML" });
+            await this.bot.sendMessage(chatId, `\u2705 <b>Sold ${tokenName}</b>\n<code>${mint.slice(0, 16)}...</code>`, {
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+                  { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
+                ]],
+              },
+            });
           } else {
-            await this.bot.sendMessage(chatId, `Sell failed: ${result.error}`);
+            await this.bot.sendMessage(chatId, `\u274c <b>Sell failed for ${tokenName}</b>\n${result.error ?? "Unknown error"}`, { parse_mode: "HTML" });
           }
           return;
         }
@@ -653,19 +665,23 @@ export class TelegramUI {
         this.bot.sendMessage(msg.chat.id, "Invalid mint address.");
         return;
       }
-      this.bot.sendMessage(msg.chat.id, `Buying ${mint.slice(0, 12)}...`);
+      this.bot.sendMessage(msg.chat.id, `\u23f3 Buying <code>${mint.slice(0, 12)}...</code>`, { parse_mode: "HTML" });
       const result = await this.callbacks.manualBuy(mint);
       if (result.success) {
-        this.bot.sendMessage(msg.chat.id, "\ud83d\udfe2 Buy executed successfully.", {
+        this.bot.sendMessage(msg.chat.id, `\ud83d\udfe2 <b>Buy executed!</b>\n<code>${mint.slice(0, 16)}...</code>`, {
+          parse_mode: "HTML",
           reply_markup: {
-            inline_keyboard: [[
-              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
-              { text: "\ud83d\udcb8 Sell", callback_data: `sell:${mint}` },
-            ]],
+            inline_keyboard: [
+              [{ text: "\ud83d\udcc8 Chart", url: `https://pump.fun/coin/${mint}` }],
+              [
+                { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+                { text: "\ud83d\udcb8 Sell", callback_data: `sell:${mint}` },
+              ],
+            ],
           },
         });
       } else {
-        this.bot.sendMessage(msg.chat.id, `Buy failed: ${result.error}`);
+        this.bot.sendMessage(msg.chat.id, `\u274c Buy failed: ${result.error ?? "Unknown error"}`);
       }
     });
 
@@ -677,14 +693,18 @@ export class TelegramUI {
         this.bot.sendMessage(msg.chat.id, "Invalid mint address.");
         return;
       }
-      this.bot.sendMessage(msg.chat.id, `Selling ${mint.slice(0, 12)}...`);
+      const positions = this.callbacks.getPositions();
+      const pos = positions.find(p => p.mint === mint);
+      const tokenName = pos?.symbol || mint.slice(0, 8);
+      this.bot.sendMessage(msg.chat.id, `Selling ${tokenName}...`);
       const result = await this.callbacks.manualSell(mint);
       if (result.success) {
-        this.bot.sendMessage(msg.chat.id, "Sell executed successfully.", {
+        this.bot.sendMessage(msg.chat.id, `\u2705 <b>Sold ${tokenName}</b>`, {
+          parse_mode: "HTML",
           reply_markup: this.backToMenuKeyboard(),
         });
       } else {
-        this.bot.sendMessage(msg.chat.id, `Sell failed: ${result.error}`);
+        this.bot.sendMessage(msg.chat.id, `\u274c Sell failed for ${tokenName}: ${result.error ?? "Unknown error"}`);
       }
     });
 
