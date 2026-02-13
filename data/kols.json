@@ -317,5 +317,115 @@
     "winRate": 50,
     "score": 50,
     "lastActive": 0
+  },
+  {
+    "address": "57rXqaQsvgyBKwebP2StfqQeCBjBS4jsrZFJN5aU2V9b",
+    "alias": "Dune#1-70%WR",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 60,
+    "lastActive": 0
+  },
+  {
+    "address": "7LW71BusGBjvFPBazjbD8vGFVPAsxjcxRw7hR2B3Y2dg",
+    "alias": "Dune#2-88%WR",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 60,
+    "lastActive": 0
+  },
+  {
+    "address": "2figkingGdephf8Vm2ETpLTFksWc3ukkYJTDj3jLGDY5",
+    "alias": "Dune#3-73%WR",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 60,
+    "lastActive": 0
+  },
+  {
+    "address": "E9c8dKj5swjCUb1JRpN1e35oJq5KpVW1FLV4m8MLKA4X",
+    "alias": "Dune#4-68%WR",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 60,
+    "lastActive": 0
+  },
+  {
+    "address": "8P3wdYH5o5sHywZSo7BYzvTHAaKg7kCGnM1mC4yPvWWL",
+    "alias": "Dune#5-Active",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
+  },
+  {
+    "address": "2actsGAW1522EyAww5MPmtvBtTRnXyZcBipZTaWcd2M8",
+    "alias": "Dune#6-MostActive",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
+  },
+  {
+    "address": "GYQwwvyL4UTrjoNChC1KNWpkYWwB1uuc53nUvpQH5gN2",
+    "alias": "Dune#7-$200K",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
+  },
+  {
+    "address": "6rwXnAp6EfgfRAqaiq3zTRaBrAuNKc4CGRq7y6QesSCL",
+    "alias": "Dune#8-2658%ROI",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
+  },
+  {
+    "address": "8nxfi8VY6cT7mD4VBEJoLg1kFzRg2gQPv3oGbVLxv7Wx",
+    "alias": "Dune#9-$142K",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
+  },
+  {
+    "address": "K27kZNq1P9a7A9HMSrkcwzLD7maN2S4VjhZW1ZSAvaG",
+    "alias": "Dune#10-$142K",
+    "addedAt": 1739462400000,
+    "totalSignals": 0,
+    "profitableSignals": 0,
+    "totalPnlPercent": 0,
+    "winRate": 50,
+    "score": 55,
+    "lastActive": 0
   }
 ]
