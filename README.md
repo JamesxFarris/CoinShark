@@ -96,6 +96,22 @@ src/
 └── bot.ts            # Main orchestrator
 ```
 
+## Deploy to Railway (Free)
+
+1. Push this repo to GitHub
+2. Go to [railway.app](https://railway.app) and sign in with GitHub
+3. Click **New Project → Deploy from GitHub repo**
+4. Select this repo — Railway auto-detects the config from `railway.toml`
+5. Go to **Variables** tab and add your secrets:
+   - `SOLANA_PRIVATE_KEY`
+   - `SOLANA_RPC_URL` (your Helius RPC URL)
+   - `PUMPPORTAL_API_KEY`
+   - `KOL_WALLETS` (comma-separated)
+6. Railway sets `PORT` automatically — the health check will just work
+7. Click **Deploy** — the bot will build, start, and stay running 24/7
+
+Railway's Hobby plan includes **$5 of free usage/month** (~500 CPU-hours), which is more than enough for this bot.
+
 ## Trading via PumpPortal
 
 Trades are executed through the [PumpPortal](https://pumpportal.fun/) local transaction API. Your private key never leaves your machine — transactions are signed locally and sent to Solana.

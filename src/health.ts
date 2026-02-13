@@ -7,7 +7,7 @@ interface HealthStats {
 
 /**
  * Lightweight HTTP health check server.
- * - GET /health → 200 with bot stats (used by Render + uptime monitors)
+ * - GET /health → 200 with bot stats (used by Railway + uptime monitors)
  * - Everything else → 404
  */
 export function startHealthServer(port: number, statsProvider: HealthStats) {
