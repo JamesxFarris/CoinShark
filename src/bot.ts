@@ -8,6 +8,7 @@ import { RiskManager } from "./riskManager";
 import { KolDiscovery } from "./kolDiscovery";
 import { TradeHistory } from "./tradeHistory";
 import { TelegramUI, TelegramBotCallbacks } from "./telegram";
+import { GmgnDiscovery } from "./gmgnDiscovery";
 import { log } from "./logger";
 
 
@@ -33,6 +34,7 @@ export class CoinSharkBot {
   private riskManager: RiskManager;
   private kolDiscovery: KolDiscovery;
   private tradeHistory: TradeHistory;
+  private gmgnDiscovery: GmgnDiscovery;
   private telegram: TelegramUI | null = null;
 
   private watchedTokens: Set<string> = new Set();
@@ -59,6 +61,7 @@ export class CoinSharkBot {
     this.signalEngine = new SignalEngine(config, this.kolDiscovery);
     this.trader = new Trader(config, this.wallet);
     this.riskManager = new RiskManager(config, this.trader, this.tradeHistory);
+    this.gmgnDiscovery = new GmgnDiscovery(this.kolDiscovery);
 
     // Wire up position close callback for Telegram alerts & KOL scoring
     this.riskManager.onPositionClose = (pos, exitMcap, reason, sig) =>
@@ -377,6 +380,36 @@ export class CoinSharkBot {
       if (!this.isRunning) return;
       this.printStats();
     }, 10 * 60 * 1000);
+
+    // GMGN auto-discovery every 6 hours
+    setInterval(async () => {
+      if (!this.isRunning) return;
+      const result = await this.gmgnDiscovery.autoDiscover();
+      if (result && result.added > 0) {
+        log.kol(`GMGN auto-discovery: added ${result.added} new wallets`);
+        // Subscribe to new KOL wallets
+        for (const w of result.wallets) {
+          this.scanner.watchAccount(w.address);
+        }
+        if (this.telegram) {
+          await this.telegram.send(GmgnDiscovery.formatResult(result));
+        }
+      }
+    }, 6 * 60 * 60 * 1000);
+
+    // Run initial GMGN discovery 30s after startup
+    setTimeout(async () => {
+      if (!this.isRunning) return;
+      const result = await this.gmgnDiscovery.autoDiscover();
+      if (result && result.added > 0) {
+        for (const w of result.wallets) {
+          this.scanner.watchAccount(w.address);
+        }
+        if (this.telegram) {
+          await this.telegram.send(GmgnDiscovery.formatResult(result));
+        }
+      }
+    }, 30_000);
   }
 
   /**
@@ -415,6 +448,15 @@ export class CoinSharkBot {
       },
 
       getKolList: () => this.kolDiscovery.formatKolList(),
+
+      discoverGmgnKols: async () => {
+        const result = await this.gmgnDiscovery.discover();
+        // Subscribe to newly discovered wallets
+        for (const w of result.wallets) {
+          this.scanner.watchAccount(w.address);
+        }
+        return result;
+      },
       getStats: () => this.tradeHistory.formatStats(),
       getRecentTrades: () => this.tradeHistory.formatRecentTrades(),
       isRunning: () => this.autoTradingEnabled,

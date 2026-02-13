@@ -1,5 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
 import { BotConfig, Position } from "./types";
+import { GmgnDiscovery } from "./gmgnDiscovery";
 import { log } from "./logger";
 
 /**
@@ -15,6 +16,7 @@ export interface TelegramBotCallbacks {
   addKol: (address: string, alias?: string) => void;
   removeKol: (address: string) => boolean;
   getKolList: () => string;
+  discoverGmgnKols: () => Promise<{ added: number; skipped: number; failed: number; wallets: Array<{ address: string; alias: string; winRate: number; pnl7d: number }> }>;
   getStats: () => string;
   getRecentTrades: () => string;
   isRunning: () => boolean;
@@ -412,9 +414,55 @@ export class TelegramUI {
             chat_id: chatId,
             message_id: msgId,
             parse_mode: "HTML",
-            reply_markup: this.backToMenuKeyboard(),
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "Discover from GMGN", callback_data: "gmgn_discover" }],
+                [
+                  { text: "<< Menu", callback_data: "menu" },
+                  { text: "Refresh", callback_data: "kols" },
+                ],
+              ],
+            },
           });
           await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // GMGN Discovery
+        if (data === "gmgn_discover") {
+          await this.bot.answerCallbackQuery(query.id, { text: "Scanning GMGN for top wallets..." });
+          await this.bot.editMessageText("<b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.", {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+          });
+          try {
+            const result = await this.callbacks.discoverGmgnKols();
+            const text = GmgnDiscovery.formatResult(result);
+            await this.bot.editMessageText(text, {
+              chat_id: chatId,
+              message_id: msgId,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "View KOLs", callback_data: "kols" }],
+                  [{ text: "<< Menu", callback_data: "menu" }],
+                ],
+              },
+            });
+          } catch (err: any) {
+            await this.bot.editMessageText(`<b>GMGN Discovery Failed</b>\n\n${err.message}`, {
+              chat_id: chatId,
+              message_id: msgId,
+              parse_mode: "HTML",
+              reply_markup: {
+                inline_keyboard: [
+                  [{ text: "Retry", callback_data: "gmgn_discover" }],
+                  [{ text: "<< Menu", callback_data: "menu" }],
+                ],
+              },
+            });
+          }
           return;
         }
 
@@ -526,6 +574,7 @@ export class TelegramUI {
       { command: "config", description: "Show current config" },
       { command: "set", description: "Change setting: /set <key> <value>" },
       { command: "balance", description: "Wallet SOL balance" },
+      { command: "discover", description: "Discover KOLs from GMGN smart money" },
     ]).catch(err => log.warn(`Failed to set Telegram command menu: ${err.message}`));
   }
 
@@ -613,8 +662,53 @@ export class TelegramUI {
       const list = this.callbacks.getKolList();
       this.bot.sendMessage(msg.chat.id, `<b>Tracked KOLs</b>\n\n${list}`, {
         parse_mode: "HTML",
-        reply_markup: this.backToMenuKeyboard(),
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Discover from GMGN", callback_data: "gmgn_discover" }],
+            [
+              { text: "<< Menu", callback_data: "menu" },
+              { text: "Refresh", callback_data: "kols" },
+            ],
+          ],
+        },
       });
+    });
+
+    // /discover - fetch top wallets from GMGN
+    this.bot.onText(/\/discover/, async (msg) => {
+      if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
+      const pendingMsg = await this.bot.sendMessage(
+        msg.chat.id,
+        "<b>Scanning GMGN for top wallets...</b>\nThis may take a few seconds.",
+        { parse_mode: "HTML" }
+      );
+      try {
+        const result = await this.callbacks.discoverGmgnKols();
+        const text = GmgnDiscovery.formatResult(result);
+        await this.bot.editMessageText(text, {
+          chat_id: msg.chat.id,
+          message_id: pendingMsg.message_id,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "View KOLs", callback_data: "kols" }],
+              [{ text: "<< Menu", callback_data: "menu" }],
+            ],
+          },
+        });
+      } catch (err: any) {
+        await this.bot.editMessageText(`<b>GMGN Discovery Failed</b>\n\n${err.message}`, {
+          chat_id: msg.chat.id,
+          message_id: pendingMsg.message_id,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Retry", callback_data: "gmgn_discover" }],
+              [{ text: "<< Menu", callback_data: "menu" }],
+            ],
+          },
+        });
+      }
     });
 
     // /addkol <wallet> [alias]
