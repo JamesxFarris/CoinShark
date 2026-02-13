@@ -1,4 +1,4 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { KolDiscovery } from "./kolDiscovery";
 import { log } from "./logger";
 
@@ -56,30 +56,31 @@ export class GmgnDiscovery {
   }
 
   /**
-   * Fetch JSON from a GMGN endpoint using curl to bypass Cloudflare TLS fingerprinting.
-   * Node's built-in https module gets blocked because Cloudflare detects its TLS fingerprint.
+   * Fetch JSON from a GMGN endpoint using curl (via execFile, no shell).
+   * Node's https module gets blocked by Cloudflare TLS fingerprinting.
+   * execFile bypasses shell entirely — no quoting issues.
    */
   private fetch(urlPath: string): Promise<any> {
     return new Promise((resolve, reject) => {
       const url = `${BASE_URL}${urlPath}`;
-      const cmd = [
-        "curl", "-s", "-L", "--compressed",
+      const args = [
+        "-s", "-L", "--compressed",
         "--max-time", "20",
-        "-H", "'Accept: application/json, text/plain, */*'",
-        "-H", "'Accept-Language: en-US,en;q=0.9'",
-        "-H", "'DNT: 1'",
-        "-H", "'Referer: https://gmgn.ai/?chain=sol'",
-        "-H", `'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'`,
-        "-H", "'sec-ch-ua: \"Google Chrome\";v=\"131\", \"Chromium\";v=\"131\", \"Not_A Brand\";v=\"24\"'",
-        "-H", "'sec-ch-ua-mobile: ?0'",
-        "-H", "'sec-ch-ua-platform: \"macOS\"'",
-        "-H", "'sec-fetch-dest: empty'",
-        "-H", "'sec-fetch-mode: cors'",
-        "-H", "'sec-fetch-site: same-origin'",
-        `'${url}'`,
-      ].join(" ");
+        "-H", "Accept: application/json, text/plain, */*",
+        "-H", "Accept-Language: en-US,en;q=0.9",
+        "-H", "DNT: 1",
+        "-H", "Referer: https://gmgn.ai/?chain=sol",
+        "-H", "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "-H", 'sec-ch-ua: "Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "-H", "sec-ch-ua-mobile: ?0",
+        "-H", 'sec-ch-ua-platform: "macOS"',
+        "-H", "sec-fetch-dest: empty",
+        "-H", "sec-fetch-mode: cors",
+        "-H", "sec-fetch-site: same-origin",
+        url,
+      ];
 
-      exec(cmd, { maxBuffer: 5 * 1024 * 1024 }, (err, stdout, stderr) => {
+      execFile("curl", args, { maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
         if (err) {
           reject(new Error(`curl failed: ${err.message}`));
           return;
