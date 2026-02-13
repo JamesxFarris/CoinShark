@@ -6,7 +6,7 @@ import { SignalEngine } from "./signalEngine";
 import { Trader } from "./trader";
 import { RiskManager } from "./riskManager";
 import { log } from "./logger";
-import { startHealthServer } from "./health";
+
 
 /**
  * CoinShark Bot — main orchestrator
@@ -83,10 +83,6 @@ export class CoinSharkBot {
     for (const kolWallet of this.signalEngine.getKolWallets()) {
       this.scanner.watchAccount(kolWallet);
     }
-
-    // Start health check server
-    const port = parseInt(process.env.PORT ?? "10000", 10);
-    startHealthServer(port, { getStats: () => this.getHealthStats() });
 
     // Connect to WebSocket
     this.scanner.connect();
@@ -249,20 +245,6 @@ export class CoinSharkBot {
       if (!this.isRunning) return;
       this.printStats();
     }, 10 * 60 * 1000);
-  }
-
-  getHealthStats(): Record<string, unknown> {
-    const uptimeMs = Date.now() - this.stats.startTime;
-    return {
-      uptime: `${(uptimeMs / 1000 / 60).toFixed(1)}m`,
-      running: this.isRunning,
-      tokensScanned: this.stats.tokensScanned,
-      tokensRejected: this.stats.tokensRejected,
-      tokensWatched: this.stats.tokensWatched,
-      tradesExecuted: this.stats.tradesExecuted,
-      openPositions: this.riskManager.positionCount,
-      maxPositions: this.config.maxPositions,
-    };
   }
 
   printStats() {
