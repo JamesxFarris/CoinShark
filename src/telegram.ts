@@ -38,7 +38,18 @@ export class TelegramUI {
 
   constructor(token: string, chatId: string) {
     this.chatId = chatId;
-    this.bot = new TelegramBot(token, { polling: true });
+    // Start polling with error handling — suppress 409 conflicts during deployment overlap
+    this.bot = new TelegramBot(token, {
+      polling: { params: { timeout: 10 } },
+    });
+    this.bot.on("polling_error", (err: any) => {
+      // 409 = another instance is polling, expected during redeployment
+      if (err?.response?.statusCode === 409 || err?.message?.includes("409")) {
+        log.debug("Telegram 409 conflict (deployment overlap) — will resolve shortly");
+      } else {
+        log.warn(`Telegram polling error: ${err.message}`);
+      }
+    });
     this.registerCommandMenu();
     this.registerCommands();
     this.registerCallbackQueries();

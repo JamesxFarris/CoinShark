@@ -39,6 +39,7 @@ export class CoinSharkBot {
 
   private watchedTokens: Set<string> = new Set();
   private tokenSymbols: Map<string, string> = new Map();
+  private pendingBuys: Set<string> = new Set(); // prevents concurrent buy evaluations
   private isRunning = false;
   private autoTradingEnabled = true;
   private stats = {
@@ -140,17 +141,19 @@ export class CoinSharkBot {
   async stop() {
     log.warn("Shutting down...");
     this.isRunning = false;
+
+    // Stop Telegram polling FIRST to prevent 409 conflict with new deployment
+    if (this.telegram) {
+      this.telegram.stop();
+      log.info("Telegram polling stopped");
+    }
+
     this.scanner.disconnect();
 
     // Close all positions on shutdown
     if (this.riskManager.positionCount > 0) {
       log.warn(`Closing ${this.riskManager.positionCount} open positions...`);
       await this.riskManager.closeAll("shutdown");
-    }
-
-    if (this.telegram) {
-      await this.telegram.send("<b>CoinShark stopped</b>");
-      this.telegram.stop();
     }
 
     this.printStats();
@@ -235,56 +238,67 @@ export class CoinSharkBot {
       );
     }
 
-    // If we already have a position, update risk management
+    // ALWAYS update existing positions — stop-loss, trailing stop, rug detection
+    // all work regardless of whether auto-trading is on or off.
     if (this.riskManager.hasPosition(trade.mint)) {
       await this.riskManager.onTradeUpdate(trade);
       return;
     }
 
-    // Skip trade evaluation if auto-trading is disabled
+    // Skip NEW trade evaluation if auto-trading is disabled
     if (!this.autoTradingEnabled) return;
 
     // Check if we should open a new position
     if (!this.riskManager.canOpenPosition()) return;
 
+    // Prevent concurrent buy evaluations for the same token (race condition guard)
+    if (this.pendingBuys.has(trade.mint)) return;
+    if (this.riskManager.hasPosition(trade.mint)) return;
+
     const { shouldBuy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
     if (!shouldBuy || !momentum) return;
 
-    // Run full scam analysis before committing real money
-    log.info(`Evaluating ${symbol} for purchase...`);
-    const scamResult = await this.scamFilter.analyze(trade.mint);
+    // Lock this mint to prevent concurrent evaluations
+    this.pendingBuys.add(trade.mint);
+    try {
+      // Run full scam analysis before committing real money
+      log.info(`Evaluating ${symbol} for purchase...`);
+      const scamResult = await this.scamFilter.analyze(trade.mint);
 
-    if (!scamResult.passed) {
-      log.scam(
-        `BLOCKED ${symbol}: ${scamResult.reasons.join("; ")}`
-      );
-      this.unwatchToken(trade.mint);
-      return;
-    }
-
-    log.signal(
-      `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
-    );
-
-    // Execute the trade (pass signal score for position sizing)
-    const opened = await this.riskManager.openPosition(
-      trade.mint,
-      symbol,
-      trade.marketCapSol,
-      momentum.signals,
-      momentum.aggregateScore
-    );
-
-    if (opened) {
-      this.stats.tradesExecuted++;
-      // Send Telegram alert
-      if (this.telegram) {
-        await this.telegram.alertBuy(
-          symbol, trade.mint, this.config.maxBetSol,
-          trade.marketCapSol,
-          momentum.signals.map(s => s.type)
+      if (!scamResult.passed) {
+        log.scam(
+          `BLOCKED ${symbol}: ${scamResult.reasons.join("; ")}`
         );
+        this.unwatchToken(trade.mint);
+        return;
       }
+
+      log.signal(
+        `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
+      );
+
+      // Execute the trade (pass signal score for position sizing)
+      const opened = await this.riskManager.openPosition(
+        trade.mint,
+        symbol,
+        trade.marketCapSol,
+        momentum.signals,
+        momentum.aggregateScore
+      );
+
+      if (opened) {
+        this.stats.tradesExecuted++;
+        // Send Telegram alert
+        if (this.telegram) {
+          await this.telegram.alertBuy(
+            symbol, trade.mint, this.config.maxBetSol,
+            trade.marketCapSol,
+            momentum.signals.map(s => s.type)
+          );
+        }
+      }
+    } finally {
+      this.pendingBuys.delete(trade.mint);
     }
   }
 

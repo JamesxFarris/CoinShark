@@ -238,7 +238,19 @@ export class RiskManager {
       return;
     }
 
-    // === 4. Hard stop loss ===
+    // === 4a. Early rug detection — fast crash exit for fresh positions ===
+    // If market cap drops >50% within the first 2 minutes, it's likely a rug pull.
+    // Don't wait for the normal stop loss — get out immediately.
+    const posAgeSeconds = (Date.now() - pos.entryTime) / 1000;
+    if (posAgeSeconds < 120 && pos.currentPnlPercent <= -50) {
+      log.trade(
+        `RUG DETECTED for ${pos.symbol}: ${pos.currentPnlPercent.toFixed(1)}% in ${posAgeSeconds.toFixed(0)}s — emergency sell`
+      );
+      await this.closePosition(pos.mint, 100, "rug_detected");
+      return;
+    }
+
+    // === 4b. Hard stop loss ===
     if (!pos.breakevenStopActive && pos.currentPnlPercent <= -this.config.stopLossPercent) {
       log.trade(
         `STOP LOSS for ${pos.symbol}: ${pos.currentPnlPercent.toFixed(1)}%`
