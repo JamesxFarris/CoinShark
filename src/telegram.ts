@@ -26,23 +26,7 @@ export interface TelegramBotCallbacks {
 
 /**
  * TelegramUI provides a Telegram bot interface for controlling CoinShark.
- *
- * Commands:
- * /start     - Welcome message & help
- * /status    - Bot status, balance, uptime
- * /positions - Open positions with PnL
- * /buy       - Manual buy: /buy <mint>
- * /sell      - Manual sell: /sell <mint>
- * /kols      - List tracked KOL wallets
- * /addkol    - Add KOL: /addkol <wallet> [alias]
- * /removekol - Remove KOL: /removekol <wallet>
- * /stats     - Win rate, PnL, trade stats
- * /history   - Recent trade history
- * /pause     - Pause auto-trading
- * /resume    - Resume auto-trading
- * /config    - Show current config
- * /set       - Change setting: /set <key> <value>
- * /balance   - Wallet balance
+ * Supports both slash commands and inline keyboard buttons.
  */
 export class TelegramUI {
   private bot: TelegramBot;
@@ -55,6 +39,7 @@ export class TelegramUI {
     this.bot = new TelegramBot(token, { polling: true });
     this.registerCommandMenu();
     this.registerCommands();
+    this.registerCallbackQueries();
     log.info("Telegram bot started");
   }
 
@@ -74,7 +59,7 @@ export class TelegramUI {
   }
 
   /**
-   * Send trade alert
+   * Send trade alert with quick-sell button
    */
   async alertBuy(symbol: string, mint: string, solAmount: number, marketCapSol: number, signals: string[]) {
     const msg = [
@@ -84,7 +69,19 @@ export class TelegramUI {
       `MCap: ${marketCapSol.toFixed(2)} SOL`,
       `Signals: ${signals.join(", ")}`,
     ].join("\n");
-    await this.send(msg);
+    try {
+      await this.bot.sendMessage(this.chatId, msg, {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Sell Now", callback_data: `sell:${mint}` },
+            { text: "Positions", callback_data: "positions" },
+          ]],
+        },
+      });
+    } catch (err: any) {
+      log.warn(`Telegram send failed: ${err.message}`);
+    }
   }
 
   /**
@@ -97,7 +94,19 @@ export class TelegramUI {
       `PnL: ${emoji}${pnlPercent.toFixed(1)}% (${emoji}${pnlSol.toFixed(4)} SOL)`,
       `Reason: ${reason}`,
     ].join("\n");
-    await this.send(msg);
+    try {
+      await this.bot.sendMessage(this.chatId, msg, {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Positions", callback_data: "positions" },
+            { text: "Stats", callback_data: "stats" },
+          ]],
+        },
+      });
+    } catch (err: any) {
+      log.warn(`Telegram send failed: ${err.message}`);
+    }
   }
 
   /**
@@ -110,6 +119,373 @@ export class TelegramUI {
   stop() {
     this.bot.stopPolling();
   }
+
+  // ─── Inline keyboard builders ──────────────────────────────────
+
+  private mainMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [
+        [
+          { text: "Status", callback_data: "status" },
+          { text: "Balance", callback_data: "balance" },
+          { text: "Positions", callback_data: "positions" },
+        ],
+        [
+          { text: "Stats", callback_data: "stats" },
+          { text: "History", callback_data: "history" },
+          { text: "KOLs", callback_data: "kols" },
+        ],
+        [
+          { text: "Config", callback_data: "config" },
+          { text: "Pause", callback_data: "pause" },
+          { text: "Resume", callback_data: "resume" },
+        ],
+        [
+          { text: "Refresh", callback_data: "refresh_menu" },
+        ],
+      ],
+    };
+  }
+
+  private backToMenuKeyboard(): TelegramBot.InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [[
+        { text: "<< Menu", callback_data: "menu" },
+        { text: "Refresh", callback_data: "refresh_menu" },
+      ]],
+    };
+  }
+
+  private positionsKeyboard(positions: Position[]): TelegramBot.InlineKeyboardMarkup {
+    const rows: TelegramBot.InlineKeyboardButton[][] = [];
+    for (const p of positions) {
+      rows.push([
+        { text: `Sell ${p.symbol}`, callback_data: `sell:${p.mint}` },
+      ]);
+    }
+    rows.push([
+      { text: "<< Menu", callback_data: "menu" },
+      { text: "Refresh", callback_data: "positions" },
+    ]);
+    return { inline_keyboard: rows };
+  }
+
+  private configKeyboard(): TelegramBot.InlineKeyboardMarkup {
+    return {
+      inline_keyboard: [
+        [
+          { text: "Bet -0.01", callback_data: "cfg:bet:-0.01" },
+          { text: "Bet Size", callback_data: "noop" },
+          { text: "Bet +0.01", callback_data: "cfg:bet:+0.01" },
+        ],
+        [
+          { text: "TP1 -10", callback_data: "cfg:tp1:-10" },
+          { text: "Take Profit 1", callback_data: "noop" },
+          { text: "TP1 +10", callback_data: "cfg:tp1:+10" },
+        ],
+        [
+          { text: "TP2 -50", callback_data: "cfg:tp2:-50" },
+          { text: "Take Profit 2", callback_data: "noop" },
+          { text: "TP2 +50", callback_data: "cfg:tp2:+50" },
+        ],
+        [
+          { text: "SL -5", callback_data: "cfg:sl:-5" },
+          { text: "Stop Loss", callback_data: "noop" },
+          { text: "SL +5", callback_data: "cfg:sl:+5" },
+        ],
+        [
+          { text: "MaxPos -1", callback_data: "cfg:maxpos:-1" },
+          { text: "Max Positions", callback_data: "noop" },
+          { text: "MaxPos +1", callback_data: "cfg:maxpos:+1" },
+        ],
+        [
+          { text: "<< Menu", callback_data: "menu" },
+          { text: "Refresh", callback_data: "config" },
+        ],
+      ],
+    };
+  }
+
+  // ─── Response builders ─────────────────────────────────────────
+
+  private buildStartMessage(): string {
+    return [
+      "<b>CoinShark Trading Bot</b>",
+      "",
+      "Use the buttons below or type commands:",
+      "",
+      "/buy &lt;mint&gt; - Manual buy",
+      "/sell &lt;mint&gt; - Manual sell",
+      "/addkol &lt;wallet&gt; [alias] - Add KOL",
+      "/removekol &lt;wallet&gt; - Remove KOL",
+      "/set &lt;key&gt; &lt;value&gt; - Update config",
+    ].join("\n");
+  }
+
+  private async buildStatusMessage(): Promise<string> {
+    if (!this.callbacks) return "Bot not ready.";
+    const balance = await this.callbacks.getBalance();
+    const positions = this.callbacks.getPositions();
+    const running = this.callbacks.isRunning();
+    const uptime = ((Date.now() - this.startTime) / 1000 / 60).toFixed(0);
+
+    return [
+      `<b>CoinShark Status</b>`,
+      `State: ${running ? "Running" : "Paused"}`,
+      `Uptime: ${uptime} min`,
+      `Balance: ${balance.toFixed(4)} SOL`,
+      `Open Positions: ${positions.length}`,
+      `Wallet: <code>${this.callbacks.getWalletAddress()}</code>`,
+    ].join("\n");
+  }
+
+  private buildPositionsMessage(positions: Position[]): string {
+    if (positions.length === 0) return "No open positions.";
+    return positions.map(p => {
+      const pnl = `${p.currentPnlPercent >= 0 ? "+" : ""}${p.currentPnlPercent.toFixed(1)}%`;
+      const age = ((Date.now() - p.entryTime) / 1000 / 60).toFixed(1);
+      return [
+        `<b>${p.symbol}</b> | ${pnl}`,
+        `  MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
+        `  Invested: ${p.solInvested} SOL | Age: ${age}m`,
+        `  TP: ${p.takeProfitHits}/2`,
+        `  <code>${p.mint}</code>`,
+      ].join("\n");
+    }).join("\n\n");
+  }
+
+  private buildConfigMessage(c: BotConfig): string {
+    return [
+      `<b>Bot Config</b>`,
+      ``,
+      `Bet Size: ${c.maxBetSol} SOL`,
+      `Max Positions: ${c.maxPositions}`,
+      `Slippage: ${c.slippagePercent}%`,
+      `Priority Fee: ${c.priorityFeeSol} SOL`,
+      ``,
+      `TP1: +${c.takeProfit1Percent}% (sell 50%)`,
+      `TP2: +${c.takeProfit2Percent}% (sell ${100 - c.moonbagPercent}%, keep ${c.moonbagPercent}% moonbag)`,
+      `SL: -${c.stopLossPercent}%`,
+      `Moonbag: ${c.moonbagPercent}%`,
+      ``,
+      `Max Position Age: ${c.maxPositionAgeMinutes} min`,
+      `Daily Loss Limit: ${c.dailyLossLimitSol} SOL`,
+      ``,
+      `MCap Range: ${c.minMarketCapSol}-${c.maxMarketCapSol} SOL`,
+      `Bonding Curve: ${c.minBondingCurvePercent}-${c.maxBondingCurvePercent}%`,
+      `Min 5m Volume: ${c.min5mVolumeSol} SOL`,
+      `Min 5m Buyers: ${c.min5mBuyers}`,
+      ``,
+      `Tap buttons below to adjust:`,
+    ].join("\n");
+  }
+
+  // ─── Callback query handler ────────────────────────────────────
+
+  private registerCallbackQueries() {
+    this.bot.on("callback_query", async (query) => {
+      if (!query.message || !this.isAuthorized(query.message.chat.id)) return;
+      if (!this.callbacks) {
+        await this.bot.answerCallbackQuery(query.id, { text: "Bot not ready" });
+        return;
+      }
+
+      const data = query.data || "";
+      const chatId = query.message.chat.id;
+      const msgId = query.message.message_id;
+
+      try {
+        // Menu / start
+        if (data === "menu" || data === "refresh_menu") {
+          await this.bot.editMessageText(this.buildStartMessage(), {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.mainMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Status
+        if (data === "status") {
+          const text = await this.buildStatusMessage();
+          await this.bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Balance
+        if (data === "balance") {
+          const balance = await this.callbacks.getBalance();
+          await this.bot.editMessageText(`Balance: <b>${balance.toFixed(4)} SOL</b>`, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Positions
+        if (data === "positions") {
+          const positions = this.callbacks.getPositions();
+          const text = this.buildPositionsMessage(positions);
+          await this.bot.editMessageText(text, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.positionsKeyboard(positions),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Sell from button
+        if (data.startsWith("sell:")) {
+          const mint = data.slice(5);
+          await this.bot.answerCallbackQuery(query.id, { text: `Selling ${mint.slice(0, 8)}...` });
+          const result = await this.callbacks.manualSell(mint);
+          if (result.success) {
+            await this.bot.sendMessage(chatId, `Sell executed for <code>${mint.slice(0, 12)}...</code>`, { parse_mode: "HTML" });
+          } else {
+            await this.bot.sendMessage(chatId, `Sell failed: ${result.error}`);
+          }
+          return;
+        }
+
+        // Stats
+        if (data === "stats") {
+          const stats = this.callbacks.getStats();
+          await this.bot.editMessageText(`<b>Trading Stats</b>\n\n${stats}`, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // History
+        if (data === "history") {
+          const history = this.callbacks.getRecentTrades();
+          await this.bot.editMessageText(`<b>Recent Trades</b>\n\n<pre>${history}</pre>`, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // KOLs
+        if (data === "kols") {
+          const list = this.callbacks.getKolList();
+          await this.bot.editMessageText(`<b>Tracked KOLs</b>\n\n${list}`, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Config
+        if (data === "config") {
+          const c = this.callbacks.getConfig();
+          await this.bot.editMessageText(this.buildConfigMessage(c), {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.configKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        // Config adjustments: cfg:<key>:<delta>
+        if (data.startsWith("cfg:")) {
+          const [, key, deltaStr] = data.split(":");
+          const delta = parseFloat(deltaStr);
+          const c = this.callbacks.getConfig();
+          let current = 0;
+          if (key === "bet") current = c.maxBetSol;
+          else if (key === "tp1") current = c.takeProfit1Percent;
+          else if (key === "tp2") current = c.takeProfit2Percent;
+          else if (key === "sl") current = c.stopLossPercent;
+          else if (key === "maxpos") current = c.maxPositions;
+
+          const newVal = Math.max(0, current + delta);
+          const newValStr = key === "bet" ? newVal.toFixed(2) : String(Math.round(newVal));
+          this.callbacks.updateConfig(key, newValStr);
+
+          const updated = this.callbacks.getConfig();
+          await this.bot.editMessageText(this.buildConfigMessage(updated), {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.configKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id, { text: `${key} = ${newValStr}` });
+          return;
+        }
+
+        // Pause
+        if (data === "pause") {
+          this.callbacks.pauseTrading();
+          await this.bot.answerCallbackQuery(query.id, { text: "Auto-trading PAUSED" });
+          await this.bot.sendMessage(chatId, "Auto-trading <b>PAUSED</b>. Manual trades still work.", {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "Resume", callback_data: "resume" },
+                { text: "<< Menu", callback_data: "menu" },
+              ]],
+            },
+          });
+          return;
+        }
+
+        // Resume
+        if (data === "resume") {
+          this.callbacks.resumeTrading();
+          await this.bot.answerCallbackQuery(query.id, { text: "Auto-trading RESUMED" });
+          await this.bot.sendMessage(chatId, "Auto-trading <b>RESUMED</b>.", {
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "Status", callback_data: "status" },
+                { text: "<< Menu", callback_data: "menu" },
+              ]],
+            },
+          });
+          return;
+        }
+
+        // No-op buttons (labels in config grid)
+        if (data === "noop") {
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
+        await this.bot.answerCallbackQuery(query.id, { text: "Unknown action" });
+      } catch (err: any) {
+        log.warn(`Callback query error: ${err.message}`);
+        await this.bot.answerCallbackQuery(query.id, { text: "Error occurred" }).catch(() => {});
+      }
+    });
+  }
+
+  // ─── Slash command registration ────────────────────────────────
 
   private registerCommandMenu() {
     this.bot.setMyCommands([
@@ -136,68 +512,37 @@ export class TelegramUI {
   }
 
   private registerCommands() {
+    // /start - show main menu with inline buttons
     this.bot.onText(/\/start/, (msg) => {
       if (!this.isAuthorized(msg.chat.id)) return;
-      this.bot.sendMessage(msg.chat.id, [
-        "<b>CoinShark Trading Bot</b>",
-        "",
-        "/status - Bot status & balance",
-        "/positions - Open positions",
-        "/buy &lt;mint&gt; - Manual buy",
-        "/sell &lt;mint&gt; - Manual sell",
-        "/kols - KOL wallet list",
-        "/addkol &lt;wallet&gt; [alias] - Add KOL",
-        "/removekol &lt;wallet&gt; - Remove KOL",
-        "/stats - Trading statistics",
-        "/history - Recent trades",
-        "/pause - Pause auto-trading",
-        "/resume - Resume auto-trading",
-        "/config - Show config",
-        "/set &lt;key&gt; &lt;value&gt; - Update config",
-        "/balance - Wallet balance",
-      ].join("\n"), { parse_mode: "HTML" });
+      this.bot.sendMessage(msg.chat.id, this.buildStartMessage(), {
+        parse_mode: "HTML",
+        reply_markup: this.mainMenuKeyboard(),
+      });
     });
 
+    // /status
     this.bot.onText(/\/status/, async (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
-      const balance = await this.callbacks.getBalance();
-      const positions = this.callbacks.getPositions();
-      const running = this.callbacks.isRunning();
-      const uptime = ((Date.now() - this.startTime) / 1000 / 60).toFixed(0);
-
-      this.bot.sendMessage(msg.chat.id, [
-        `<b>CoinShark Status</b>`,
-        `State: ${running ? "Running" : "Paused"}`,
-        `Uptime: ${uptime} min`,
-        `Balance: ${balance.toFixed(4)} SOL`,
-        `Open Positions: ${positions.length}`,
-        `Wallet: <code>${this.callbacks.getWalletAddress()}</code>`,
-      ].join("\n"), { parse_mode: "HTML" });
+      const text = await this.buildStatusMessage();
+      this.bot.sendMessage(msg.chat.id, text, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
     });
 
+    // /positions - with sell buttons per position
     this.bot.onText(/\/positions/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const positions = this.callbacks.getPositions();
-      if (positions.length === 0) {
-        this.bot.sendMessage(msg.chat.id, "No open positions.");
-        return;
-      }
-
-      const lines = positions.map(p => {
-        const pnl = `${p.currentPnlPercent >= 0 ? "+" : ""}${p.currentPnlPercent.toFixed(1)}%`;
-        const age = ((Date.now() - p.entryTime) / 1000 / 60).toFixed(1);
-        return [
-          `<b>${p.symbol}</b> | ${pnl}`,
-          `  MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
-          `  Invested: ${p.solInvested} SOL | Age: ${age}m`,
-          `  TP: ${p.takeProfitHits}/2`,
-          `  <code>${p.mint}</code>`,
-        ].join("\n");
+      const text = this.buildPositionsMessage(positions);
+      this.bot.sendMessage(msg.chat.id, text, {
+        parse_mode: "HTML",
+        reply_markup: this.positionsKeyboard(positions),
       });
-
-      this.bot.sendMessage(msg.chat.id, lines.join("\n\n"), { parse_mode: "HTML" });
     });
 
+    // /buy <mint>
     this.bot.onText(/\/buy (.+)/, async (msg, match) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const mint = match[1].trim();
@@ -208,12 +553,20 @@ export class TelegramUI {
       this.bot.sendMessage(msg.chat.id, `Buying ${mint.slice(0, 12)}...`);
       const result = await this.callbacks.manualBuy(mint);
       if (result.success) {
-        this.bot.sendMessage(msg.chat.id, "Buy executed successfully.");
+        this.bot.sendMessage(msg.chat.id, "Buy executed successfully.", {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "Positions", callback_data: "positions" },
+              { text: "Sell", callback_data: `sell:${mint}` },
+            ]],
+          },
+        });
       } else {
         this.bot.sendMessage(msg.chat.id, `Buy failed: ${result.error}`);
       }
     });
 
+    // /sell <mint>
     this.bot.onText(/\/sell (.+)/, async (msg, match) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const mint = match[1].trim();
@@ -224,18 +577,25 @@ export class TelegramUI {
       this.bot.sendMessage(msg.chat.id, `Selling ${mint.slice(0, 12)}...`);
       const result = await this.callbacks.manualSell(mint);
       if (result.success) {
-        this.bot.sendMessage(msg.chat.id, "Sell executed successfully.");
+        this.bot.sendMessage(msg.chat.id, "Sell executed successfully.", {
+          reply_markup: this.backToMenuKeyboard(),
+        });
       } else {
         this.bot.sendMessage(msg.chat.id, `Sell failed: ${result.error}`);
       }
     });
 
+    // /kols
     this.bot.onText(/\/kols/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const list = this.callbacks.getKolList();
-      this.bot.sendMessage(msg.chat.id, `<b>Tracked KOLs</b>\n\n${list}`, { parse_mode: "HTML" });
+      this.bot.sendMessage(msg.chat.id, `<b>Tracked KOLs</b>\n\n${list}`, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
     });
 
+    // /addkol <wallet> [alias]
     this.bot.onText(/\/addkol (.+)/, (msg, match) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const parts = match[1].trim().split(/\s+/);
@@ -246,75 +606,103 @@ export class TelegramUI {
         return;
       }
       this.callbacks.addKol(address, alias);
-      this.bot.sendMessage(msg.chat.id, `Added KOL: ${alias || address.slice(0, 8)}... (${address.slice(0, 12)}...)`);
+      this.bot.sendMessage(msg.chat.id, `Added KOL: ${alias || address.slice(0, 8)}... (<code>${address.slice(0, 12)}...</code>)`, {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "View KOLs", callback_data: "kols" },
+            { text: "<< Menu", callback_data: "menu" },
+          ]],
+        },
+      });
     });
 
+    // /removekol <wallet>
     this.bot.onText(/\/removekol (.+)/, (msg, match) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const address = match[1].trim();
       const removed = this.callbacks.removeKol(address);
-      this.bot.sendMessage(msg.chat.id, removed ? `Removed KOL: ${address.slice(0, 12)}...` : "KOL not found.");
+      this.bot.sendMessage(msg.chat.id, removed ? `Removed KOL: ${address.slice(0, 12)}...` : "KOL not found.", {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "View KOLs", callback_data: "kols" },
+            { text: "<< Menu", callback_data: "menu" },
+          ]],
+        },
+      });
     });
 
+    // /stats
     this.bot.onText(/\/stats/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const stats = this.callbacks.getStats();
-      this.bot.sendMessage(msg.chat.id, `<b>Trading Stats</b>\n\n${stats}`, { parse_mode: "HTML" });
+      this.bot.sendMessage(msg.chat.id, `<b>Trading Stats</b>\n\n${stats}`, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
     });
 
+    // /history
     this.bot.onText(/\/history/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const history = this.callbacks.getRecentTrades();
-      this.bot.sendMessage(msg.chat.id, `<b>Recent Trades</b>\n\n<pre>${history}</pre>`, { parse_mode: "HTML" });
+      this.bot.sendMessage(msg.chat.id, `<b>Recent Trades</b>\n\n<pre>${history}</pre>`, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
     });
 
+    // /pause
     this.bot.onText(/\/pause/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       this.callbacks.pauseTrading();
-      this.bot.sendMessage(msg.chat.id, "Auto-trading PAUSED. Manual trades still work.\n/resume to restart.");
+      this.bot.sendMessage(msg.chat.id, "Auto-trading <b>PAUSED</b>. Manual trades still work.", {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Resume", callback_data: "resume" },
+            { text: "<< Menu", callback_data: "menu" },
+          ]],
+        },
+      });
     });
 
+    // /resume
     this.bot.onText(/\/resume/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       this.callbacks.resumeTrading();
-      this.bot.sendMessage(msg.chat.id, "Auto-trading RESUMED.");
+      this.bot.sendMessage(msg.chat.id, "Auto-trading <b>RESUMED</b>.", {
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "Status", callback_data: "status" },
+            { text: "<< Menu", callback_data: "menu" },
+          ]],
+        },
+      });
     });
 
+    // /balance
     this.bot.onText(/\/balance/, async (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const balance = await this.callbacks.getBalance();
-      this.bot.sendMessage(msg.chat.id, `Balance: ${balance.toFixed(4)} SOL`);
+      this.bot.sendMessage(msg.chat.id, `Balance: <b>${balance.toFixed(4)} SOL</b>`, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
     });
 
+    // /config - with adjustment buttons
     this.bot.onText(/\/config/, (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const c = this.callbacks.getConfig();
-      this.bot.sendMessage(msg.chat.id, [
-        `<b>Bot Config</b>`,
-        ``,
-        `Bet Size: ${c.maxBetSol} SOL`,
-        `Max Positions: ${c.maxPositions}`,
-        `Slippage: ${c.slippagePercent}%`,
-        `Priority Fee: ${c.priorityFeeSol} SOL`,
-        ``,
-        `TP1: +${c.takeProfit1Percent}% (sell 50%)`,
-        `TP2: +${c.takeProfit2Percent}% (sell ${100 - c.moonbagPercent}%, keep ${c.moonbagPercent}% moonbag)`,
-        `SL: -${c.stopLossPercent}%`,
-        `Moonbag: ${c.moonbagPercent}%`,
-        ``,
-        `Max Position Age: ${c.maxPositionAgeMinutes} min`,
-        `Daily Loss Limit: ${c.dailyLossLimitSol} SOL`,
-        ``,
-        `MCap Range: ${c.minMarketCapSol}-${c.maxMarketCapSol} SOL`,
-        `Bonding Curve: ${c.minBondingCurvePercent}-${c.maxBondingCurvePercent}%`,
-        `Min 5m Volume: ${c.min5mVolumeSol} SOL`,
-        `Min 5m Buyers: ${c.min5mBuyers}`,
-        ``,
-        `<b>Adjustable with /set:</b>`,
-        `bet, maxpos, tp1, tp2, sl, moonbag, maxage, dailyloss`,
-      ].join("\n"), { parse_mode: "HTML" });
+      this.bot.sendMessage(msg.chat.id, this.buildConfigMessage(c), {
+        parse_mode: "HTML",
+        reply_markup: this.configKeyboard(),
+      });
     });
 
+    // /set <key> <value>
     this.bot.onText(/\/set (.+)/, (msg, match) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks || !match) return;
       const parts = match[1].trim().split(/\s+/);
@@ -324,7 +712,14 @@ export class TelegramUI {
       }
       const updated = this.callbacks.updateConfig(parts[0], parts[1]);
       if (updated) {
-        this.bot.sendMessage(msg.chat.id, `Updated ${parts[0]} = ${parts[1]}`);
+        this.bot.sendMessage(msg.chat.id, `Updated ${parts[0]} = ${parts[1]}`, {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "View Config", callback_data: "config" },
+              { text: "<< Menu", callback_data: "menu" },
+            ]],
+          },
+        });
       } else {
         this.bot.sendMessage(msg.chat.id, `Unknown setting: ${parts[0]}\nValid: bet, maxpos, tp1, tp2, sl, maxage, dailyloss`);
       }
