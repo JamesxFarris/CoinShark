@@ -475,28 +475,28 @@ export class SignalEngine {
     for (const signal of signals) {
       switch (signal.type) {
         case "kol_buy":
-          aggregateScore += signal.strength * 0.25;
+          aggregateScore += signal.strength * 0.35; // strongest indicator — smart money edge
           break;
         case "volume_spike":
-          aggregateScore += signal.strength * 0.15;
+          aggregateScore += signal.strength * 0.12;
           break;
         case "momentum":
-          aggregateScore += signal.strength * 0.15;
+          aggregateScore += signal.strength * 0.12;
           break;
         case "trend":
-          aggregateScore += signal.strength * 0.10;
+          aggregateScore += signal.strength * 0.08;
           break;
         case "bonding_curve":
-          aggregateScore += signal.strength * 0.10;
+          aggregateScore += signal.strength * 0.08;
           break;
         case "bonding_curve_velocity":
-          aggregateScore += signal.strength * 0.05; // lighter weight — supplements bonding_curve level
+          aggregateScore += signal.strength * 0.05;
           break;
         case "holder_velocity":
-          aggregateScore += signal.strength * 0.15;
+          aggregateScore += signal.strength * 0.10;
           break;
         case "alpha_wallet":
-          aggregateScore += signal.strength * 0.10;
+          aggregateScore += signal.strength * 0.15; // strong indicator — auto-discovered smart money
           break;
         // Negative signals reduce score (moderate penalty — active tokens have sells)
         case "coordinated_sell":
