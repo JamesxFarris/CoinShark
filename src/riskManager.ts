@@ -280,22 +280,22 @@ export class RiskManager {
 
     // === 6. Take Profit Ladder ===
 
-    // TP1: sell 25% at 2x → secure some profit, activate trailing stop, let 75% ride
+    // TP1: sell 50% at 2x → recover full initial, remaining 50% rides as house money
     if (
       pos.takeProfitHits === 0 &&
       pos.currentPnlPercent >= this.config.takeProfit1Percent
     ) {
       log.trade(
-        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 25% (securing profit, 75% rides)`
+        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (initial recovered, rest is house money)`
       );
       this.pendingSells.add(pos.mint);
       try {
-        const result = await this.trader.sell(pos.mint, 25);
+        const result = await this.trader.sell(pos.mint, 50);
         if (result.success) {
           pos.takeProfitHits = 1;
           pos.trailingStopActive = true;
-          pos.solRecovered += pos.solInvested * 0.25;
-          pos.solInvested = pos.solInvested * 0.75;
+          pos.solRecovered += pos.solInvested * 0.5;
+          pos.solInvested = pos.solInvested * 0.5;
           log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
         }
       } finally {
