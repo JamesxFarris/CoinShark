@@ -43,6 +43,7 @@ interface TokenState {
   vTokensInBondingCurve: number;
   graduated: boolean;
   creatorSold: boolean;
+  creatorSellSol: number;
   holderSnapshots: HolderSnapshot[];
   allUniqueBuyers: Set<string>;
   lastCoordinatedSellTime: number;
@@ -97,6 +98,7 @@ export class SignalEngine {
       vTokensInBondingCurve: token.vTokensInBondingCurve,
       graduated: false,
       creatorSold: false,
+      creatorSellSol: 0,
       holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
       allUniqueBuyers: new Set(),
       lastCoordinatedSellTime: 0,
@@ -160,6 +162,7 @@ export class SignalEngine {
         vTokensInBondingCurve: trade.vTokensInBondingCurve,
         graduated: false,
         creatorSold: false,
+        creatorSellSol: 0,
         holderSnapshots: [{ timestamp: Date.now(), uniqueHolders: 0 }],
         allUniqueBuyers: new Set(),
         lastCoordinatedSellTime: 0,
@@ -211,8 +214,9 @@ export class SignalEngine {
     const signals: Signal[] = [];
 
     // === Creator sell detection ===
-    if (trade.txType === "sell" && trade.traderPublicKey === state.creator && !state.creatorSold) {
+    if (trade.txType === "sell" && trade.traderPublicKey === state.creator) {
       state.creatorSold = true;
+      state.creatorSellSol += trade.solAmount;
       signals.push({
         type: "creator_sell",
         mint: trade.mint,
@@ -474,11 +478,13 @@ export class SignalEngine {
 
     // === Creator sold penalty (must be in evaluateMomentum, not just processTrade) ===
     if (state.creatorSold) {
+      // Scale strength by how much the creator sold — bigger dumps = bigger penalty
+      const creatorStrength = state.creatorSellSol >= 3 ? 100 : Math.min(100, 50 + state.creatorSellSol * 15);
       signals.push({
         type: "creator_sell",
         mint,
-        strength: 90,
-        details: `Creator ${state.creator.slice(0, 8)}... sold`,
+        strength: creatorStrength,
+        details: `Creator ${state.creator.slice(0, 8)}... sold ${state.creatorSellSol.toFixed(2)} SOL`,
         timestamp: now,
       });
     }
@@ -564,9 +570,11 @@ export class SignalEngine {
       aggregateScore = 0;
     }
 
-    // Creator sold = significant penalty, but NOT a hard zero.
-    // "No dev" tokens (where creator sold early) can still run if momentum is strong.
-    // The creator_sell signal already subtracts via the weighted scoring above.
+    // Large creator dump (>3 SOL) = hard zero. This is almost always a rug.
+    // Small creator sells (<3 SOL) are penalized but not disqualifying — "no dev" tokens can still run.
+    if (state.creatorSellSol >= 3) {
+      aggregateScore = 0;
+    }
 
     return {
       mint,
