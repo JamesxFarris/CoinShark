@@ -85,7 +85,7 @@ export class CoinSharkBot {
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
     log.info(`Market cap range: ${this.config.minMarketCapSol}-${this.config.maxMarketCapSol} SOL`);
-    log.info(`Signal score threshold: 55 | Safety score threshold: 50`);
+    log.info(`Signal score threshold: 50 | Safety score threshold: 50`);
     log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | TP3: +${this.config.takeProfit3Percent}% | SL: -${this.config.stopLossPercent}%`);
     log.info(`Moonbag: ${this.config.moonbagPercent}% | Breakeven at: +${this.config.breakevenActivationPercent}% | Trailing: ${this.config.trailingStopPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);

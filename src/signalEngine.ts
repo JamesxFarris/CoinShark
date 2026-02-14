@@ -228,7 +228,7 @@ export class SignalEngine {
       state.kolBuys.add(trade.traderPublicKey);
       const kolWeight = this.kolDiscovery.getKolWeight(trade.traderPublicKey);
       const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
-      const baseStrength = Math.min(100, state.kolBuys.size * 40);
+      const baseStrength = Math.min(100, state.kolBuys.size * 60);
       signals.push({
         type: "kol_buy",
         mint: trade.mint,
@@ -559,11 +559,11 @@ export class SignalEngine {
       return { shouldBuy: false, momentum, reason: "No signals detected" };
     }
 
-    if (momentum.aggregateScore < 55) {
+    if (momentum.aggregateScore < 50) {
       return {
         shouldBuy: false,
         momentum,
-        reason: `Score too low: ${momentum.aggregateScore}/100 (need 55+)`,
+        reason: `Score too low: ${momentum.aggregateScore}/100 (need 50+)`,
       };
     }
 
