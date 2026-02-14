@@ -1,6 +1,10 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { ScamAnalysis, BotConfig, PumpPortalNewToken, PumpPortalTrade } from "./types";
 import { log } from "./logger";
+import * as fs from "fs";
+import * as path from "path";
+
+const SCAM_CREATORS_FILE = path.join(process.cwd(), "data", "scam-creators.json");
 
 /**
  * Tracks per-token trade history for wash trading / bundle detection
@@ -53,6 +57,40 @@ export class ScamFilter {
   constructor(connection: Connection, config: BotConfig) {
     this.connection = connection;
     this.config = config;
+    this.loadScamCreators();
+  }
+
+  private loadScamCreators() {
+    try {
+      if (fs.existsSync(SCAM_CREATORS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(SCAM_CREATORS_FILE, "utf-8"));
+        for (const addr of data.scamCreators ?? []) {
+          this.knownScamCreators.add(addr);
+        }
+        for (const [addr, count] of Object.entries(data.creatorCounts ?? {})) {
+          this.creatorTokenCount.set(addr, count as number);
+        }
+        if (this.knownScamCreators.size > 0) {
+          log.info(`Loaded ${this.knownScamCreators.size} known scam creators from disk`);
+        }
+      }
+    } catch (e: any) {
+      log.warn(`Failed to load scam creators: ${e.message}`);
+    }
+  }
+
+  private saveScamCreators() {
+    try {
+      const dir = path.dirname(SCAM_CREATORS_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data = {
+        scamCreators: Array.from(this.knownScamCreators),
+        creatorCounts: Object.fromEntries(this.creatorTokenCount),
+      };
+      fs.writeFileSync(SCAM_CREATORS_FILE, JSON.stringify(data, null, 2));
+    } catch (e: any) {
+      log.warn(`Failed to save scam creators: ${e.message}`);
+    }
   }
 
   /**
@@ -76,8 +114,9 @@ export class ScamFilter {
     const count = (this.creatorTokenCount.get(token.traderPublicKey) ?? 0) + 1;
     this.creatorTokenCount.set(token.traderPublicKey, count);
 
-    if (count >= 5) {
+    if (count >= 5 && !this.knownScamCreators.has(token.traderPublicKey)) {
       this.knownScamCreators.add(token.traderPublicKey);
+      this.saveScamCreators();
       log.scam(
         `Serial deployer detected: ${token.traderPublicKey.slice(0, 8)}... (${count} tokens)`
       );

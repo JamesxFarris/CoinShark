@@ -50,11 +50,46 @@ export class WalletManager {
   ): Promise<string> {
     const tx = VersionedTransaction.deserialize(serializedTx);
     tx.sign([this.keypair]);
-    const signature = await this.connection.sendTransaction(tx, {
-      skipPreflight: true,
-      maxRetries: 3,
-    });
-    log.debug(`Transaction sent: ${signature}`);
+
+    // Send via Jito for MEV protection + better landing rate.
+    // Falls back to standard RPC if Jito fails.
+    const txBase64 = Buffer.from(tx.serialize()).toString("base64");
+    let signature: string | null = null;
+
+    try {
+      const jitoResp = await fetch(
+        "https://mainnet.block-engine.jito.wtf/api/v1/transactions",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "sendTransaction",
+            params: [txBase64, { encoding: "base64" }],
+          }),
+        }
+      );
+      const jitoResult = await jitoResp.json() as any;
+      if (jitoResult.result) {
+        signature = jitoResult.result;
+        log.debug(`Transaction sent via Jito: ${signature}`);
+      } else {
+        log.debug(`Jito send failed: ${JSON.stringify(jitoResult.error ?? jitoResult)}, falling back to RPC`);
+      }
+    } catch (e: any) {
+      log.debug(`Jito endpoint error: ${e.message}, falling back to RPC`);
+    }
+
+    // Fallback to standard RPC
+    if (!signature) {
+      signature = await this.connection.sendTransaction(tx, {
+        skipPreflight: true,
+        maxRetries: 3,
+      });
+      log.debug(`Transaction sent via RPC: ${signature}`);
+    }
+
     return signature;
   }
 

@@ -8,10 +8,13 @@ import {
 } from "./types";
 import { KolDiscovery } from "./kolDiscovery";
 import { log } from "./logger";
+import * as fs from "fs";
+import * as path from "path";
 
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
 const ONE_MINUTE_MS = 60 * 1000;
 const TOTAL_BONDING_CURVE_TOKENS = 800_000_000;
+const ALPHA_WALLETS_FILE = path.join(process.cwd(), "data", "alpha-wallets.json");
 
 interface TradeRecord {
   trader: string;
@@ -75,6 +78,7 @@ export class SignalEngine {
   constructor(config: BotConfig, kolDiscovery: KolDiscovery) {
     this.config = config;
     this.kolDiscovery = kolDiscovery;
+    this.loadAlphaWallets();
   }
 
   /**
@@ -682,6 +686,8 @@ export class SignalEngine {
         this.alphaWallets.delete(addr);
       }
     }
+
+    this.saveAlphaWallets();
   }
 
   /**
@@ -729,6 +735,77 @@ export class SignalEngine {
    */
   getKolWallets(): string[] {
     return this.kolDiscovery.getKolAddresses();
+  }
+
+  /**
+   * Load alpha wallets from disk
+   */
+  private loadAlphaWallets() {
+    try {
+      if (fs.existsSync(ALPHA_WALLETS_FILE)) {
+        const data = JSON.parse(fs.readFileSync(ALPHA_WALLETS_FILE, "utf-8"));
+        for (const [addr, profile] of Object.entries(data)) {
+          this.alphaWallets.set(addr, profile as { hits: number; misses: number; lastSeen: number });
+        }
+        if (this.alphaWallets.size > 0) {
+          log.info(`Loaded ${this.alphaWallets.size} alpha wallets from disk`);
+        }
+      }
+    } catch (e: any) {
+      log.warn(`Failed to load alpha wallets: ${e.message}`);
+    }
+  }
+
+  /**
+   * Save alpha wallets to disk
+   */
+  private saveAlphaWallets() {
+    try {
+      const dir = path.dirname(ALPHA_WALLETS_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data: Record<string, { hits: number; misses: number; lastSeen: number }> = {};
+      for (const [addr, profile] of this.alphaWallets) {
+        data[addr] = profile;
+      }
+      fs.writeFileSync(ALPHA_WALLETS_FILE, JSON.stringify(data, null, 2));
+    } catch (e: any) {
+      log.warn(`Failed to save alpha wallets: ${e.message}`);
+    }
+  }
+
+  /**
+   * Check if a KOL buy is high-conviction enough for instant follow.
+   * Returns the signal details if we should buy immediately, null otherwise.
+   */
+  checkInstantKolFollow(trade: PumpPortalTrade): { kolAlias: string; kolScore: number; solAmount: number } | null {
+    // Only for buys with real size
+    if (trade.txType !== "buy" || trade.solAmount < 1.0) return null;
+
+    // Must be a tracked KOL
+    if (!this.kolDiscovery.isKol(trade.traderPublicKey)) return null;
+
+    const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
+    if (!kol) return null;
+
+    // Only instant-follow KOLs with score >= 80 (proven winners)
+    if (kol.score < 80) return null;
+
+    // Must be a token we're watching
+    const state = this.tokenStates.get(trade.mint);
+    if (!state) return null;
+
+    // Don't instant-follow if creator already sold
+    if (state.creatorSold) return null;
+
+    // Market cap bounds check
+    if (state.currentMarketCapSol < this.config.minMarketCapSol ||
+        state.currentMarketCapSol > this.config.maxMarketCapSol) return null;
+
+    return {
+      kolAlias: kol.alias,
+      kolScore: kol.score,
+      solAmount: trade.solAmount,
+    };
   }
 
   /**

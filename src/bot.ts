@@ -1,4 +1,4 @@
-import { BotConfig, PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration, Position } from "./types";
+import { BotConfig, PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration, Position, Signal } from "./types";
 import { WalletManager } from "./wallet";
 import { TokenScanner } from "./scanner";
 import { ScamFilter } from "./scamFilter";
@@ -291,6 +291,52 @@ export class CoinSharkBot {
     // Prevent concurrent buy evaluations for the same token (race condition guard)
     if (this.pendingBuys.has(trade.mint)) return;
     if (this.riskManager.hasPosition(trade.mint)) return;
+
+    // === KOL instant follow: high-conviction KOLs (score 80+, buy >= 1 SOL) ===
+    // Skip the 5-minute momentum wait — buy within seconds of the KOL.
+    const instantFollow = this.signalEngine.checkInstantKolFollow(trade);
+    if (instantFollow) {
+      this.pendingBuys.add(trade.mint);
+      try {
+        log.kol(`INSTANT FOLLOW: ${symbol} — ${instantFollow.kolAlias} (score ${instantFollow.kolScore}) bought ${instantFollow.solAmount.toFixed(2)} SOL`);
+        const scamResult = await this.scamFilter.analyze(trade.mint);
+        if (!scamResult.passed) {
+          log.scam(`BLOCKED instant follow ${symbol}: ${scamResult.reasons.join("; ")}`);
+          const kolBuyers = this.signalEngine.getKolBuyers(trade.mint);
+          for (const kolAddr of kolBuyers) {
+            const blacklisted = this.kolDiscovery.recordScamBuy(kolAddr, symbol);
+            if (blacklisted) this.scanner.unwatchAccount(kolAddr);
+          }
+          this.unwatchToken(trade.mint);
+          return;
+        }
+        if (scamResult.scores.overallSafety < 50) {
+          log.scam(`BLOCKED instant follow ${symbol}: safety ${scamResult.scores.overallSafety}/100`);
+          this.unwatchToken(trade.mint);
+          return;
+        }
+        this.boughtTokens.add(trade.mint);
+        const signals: Signal[] = [{
+          type: "kol_buy",
+          mint: trade.mint,
+          strength: 90,
+          details: `Instant follow: ${instantFollow.kolAlias} (score ${instantFollow.kolScore})`,
+          timestamp: Date.now(),
+        }];
+        const opened = await this.riskManager.openPosition(
+          trade.mint, symbol, trade.marketCapSol, signals, 80
+        );
+        if (opened) {
+          this.stats.tradesExecuted++;
+          if (this.telegram) {
+            await this.telegram.alertBuy(symbol, trade.mint, this.config.maxBetSol, trade.marketCapSol, ["kol_instant_follow"]);
+          }
+        }
+      } finally {
+        this.pendingBuys.delete(trade.mint);
+      }
+      return;
+    }
 
     const { shouldBuy: buy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
     if (!buy || !momentum) {
