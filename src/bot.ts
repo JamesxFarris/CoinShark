@@ -253,17 +253,23 @@ export class CoinSharkBot {
           await this.riskManager.closePosition(trade.mint, 100, signal.type);
           return;
         }
-        // Coordinated sell: only emergency exit if we're at a loss AND no KOLs bought recently.
-        // If KOLs are buying the dip, trust smart money over retail sell pressure.
+        // Coordinated sell: emergency exit if we're at a loss.
+        // Trust KOL dip-buying UNLESS the creator is also dumping — that's a rug signal.
         if (signal.type === "coordinated_sell" && signal.strength >= 95) {
           const pos = this.riskManager.getPosition(trade.mint);
-          const recentKolBuys = this.signalEngine.hasRecentKolBuys(trade.mint, 300);
-          if (pos && pos.currentPnlPercent <= 0 && !recentKolBuys) {
+          const recentKolBuys = this.signalEngine.hasRecentKolBuys(trade.mint, 300, 0.5);
+          const creatorSold = this.signalEngine.hasCreatorSold(trade.mint);
+          if (pos && pos.currentPnlPercent <= 0 && creatorSold) {
+            // Creator dump + coordinated sell = rug. Exit regardless of KOL buys.
+            log.trade(`EMERGENCY: ${symbol} — coordinated sell + creator dump at ${pos.currentPnlPercent.toFixed(1)}% PnL — exiting!`);
+            await this.riskManager.closePosition(trade.mint, 100, "coordinated_sell_rug");
+            return;
+          } else if (pos && pos.currentPnlPercent <= 0 && !recentKolBuys) {
             log.trade(`EMERGENCY: ${symbol} — ${signal.type} detected at ${pos.currentPnlPercent.toFixed(1)}% PnL — selling!`);
             await this.riskManager.closePosition(trade.mint, 100, signal.type);
             return;
-          } else if (recentKolBuys) {
-            log.trade(`HOLD: ${symbol} — ${signal.type} detected but KOLs bought recently — trusting smart money`);
+          } else if (recentKolBuys && !creatorSold) {
+            log.trade(`HOLD: ${symbol} — ${signal.type} detected but KOLs bought recently (no creator dump) — trusting smart money`);
           } else {
             log.trade(`WARNING: ${symbol} — ${signal.type} detected but in profit (+${pos?.currentPnlPercent.toFixed(1)}%) — trailing stop will protect`);
           }

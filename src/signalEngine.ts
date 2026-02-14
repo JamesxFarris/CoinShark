@@ -660,13 +660,13 @@ export class SignalEngine {
   /**
    * Check if KOLs have bought this token recently (within lastSeconds)
    */
-  hasRecentKolBuys(mint: string, lastSeconds: number = 300): boolean {
+  hasRecentKolBuys(mint: string, lastSeconds: number = 300, minSolAmount: number = 0.5): boolean {
     const state = this.tokenStates.get(mint);
     if (!state) return false;
     const cutoff = Date.now() - lastSeconds * 1000;
-    // Check trades for recent KOL buys
+    // Check trades for recent KOL buys — filter dust buys (bait signals)
     return state.trades.some(
-      (t) => t.timestamp >= cutoff && t.action === "buy" && this.kolDiscovery.isKol(t.trader)
+      (t) => t.timestamp >= cutoff && t.action === "buy" && t.solAmount >= minSolAmount && this.kolDiscovery.isKol(t.trader)
     );
   }
 

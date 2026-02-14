@@ -2,6 +2,8 @@ import { Position, BotConfig, PumpPortalTrade, Signal } from "./types";
 import { Trader } from "./trader";
 import { TradeHistory } from "./tradeHistory";
 import { log } from "./logger";
+import * as fs from "fs";
+import * as path from "path";
 
 export type PositionCloseCallback = (
   position: Position,
@@ -38,12 +40,40 @@ export class RiskManager {
   private positions: Map<string, Position> = new Map();
   private pendingSells: Set<string> = new Set(); // prevents concurrent sell attempts
   private dailyLossExceeded = false;
+  private positionsFile = path.join(process.cwd(), "data", "positions.json");
   onPositionClose: PositionCloseCallback | null = null;
 
   constructor(config: BotConfig, trader: Trader, tradeHistory: TradeHistory) {
     this.config = config;
     this.trader = trader;
     this.tradeHistory = tradeHistory;
+    this.loadPositions();
+  }
+
+  private savePositions(): void {
+    try {
+      const dir = path.dirname(this.positionsFile);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const data = JSON.stringify(Array.from(this.positions.entries()), null, 2);
+      fs.writeFileSync(this.positionsFile, data);
+    } catch (e: any) {
+      log.error(`Failed to save positions: ${e.message}`);
+    }
+  }
+
+  private loadPositions(): void {
+    try {
+      if (!fs.existsSync(this.positionsFile)) return;
+      const data = JSON.parse(fs.readFileSync(this.positionsFile, "utf-8"));
+      for (const [mint, pos] of data) {
+        this.positions.set(mint, pos);
+      }
+      if (this.positions.size > 0) {
+        log.info(`Restored ${this.positions.size} position(s) from disk`);
+      }
+    } catch (e: any) {
+      log.error(`Failed to load positions: ${e.message}`);
+    }
   }
 
   /**
@@ -154,6 +184,7 @@ export class RiskManager {
     };
 
     this.positions.set(mint, position);
+    this.savePositions();
 
     // Record buy in trade history
     this.tradeHistory.recordBuy(
@@ -438,6 +469,7 @@ export class RiskManager {
           this.checkDailyLossLimit();
 
           this.positions.delete(mint);
+          this.savePositions();
         }
         return true;
       } else {
