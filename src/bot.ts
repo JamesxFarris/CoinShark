@@ -41,6 +41,7 @@ export class CoinSharkBot {
   private tokenSymbols: Map<string, string> = new Map();
   private pendingBuys: Set<string> = new Set(); // prevents concurrent buy evaluations
   private boughtTokens: Set<string> = new Set(); // never buy the same token twice per session
+  private skipLogTimes: Map<string, number> = new Map(); // throttle SKIP logs per token
   private isRunning = false;
   private autoTradingEnabled = false; // starts OFF — user must enable via Telegram
   private stats = {
@@ -287,9 +288,14 @@ export class CoinSharkBot {
 
     const { shouldBuy: buy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
     if (!buy || !momentum) {
-      // Log rejections for tokens with some signal activity (score 30+) so we can see near-misses
+      // Log rejections for tokens with some signal activity (score 30+) — throttled to once per 60s per token
       if (momentum && momentum.aggregateScore >= 30) {
-        log.signal(`SKIP ${symbol}: ${reason} (mcap: ${trade.marketCapSol.toFixed(0)} SOL, signals: ${momentum.signals.map(s => s.type).join(", ")})`);
+        const now = Date.now();
+        const lastLog = this.skipLogTimes.get(trade.mint) ?? 0;
+        if (now - lastLog >= 60_000) {
+          this.skipLogTimes.set(trade.mint, now);
+          log.signal(`SKIP ${symbol}: ${reason} (score: ${momentum.aggregateScore}/100, mcap: ${trade.marketCapSol.toFixed(0)} SOL, signals: ${momentum.signals.map(s => s.type).join(", ")})`);
+        }
       }
       return;
     }
