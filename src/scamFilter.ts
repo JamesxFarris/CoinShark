@@ -134,6 +134,8 @@ export class ScamFilter {
     let mintAuthorityEnabled = true;
     let freezeAuthorityEnabled = true;
     let authorityCheckSucceeded = false;
+    let tokenTotalSupply = 0; // used later for holder concentration
+    let tokenDecimals = 0;
     try {
       const mintPk = new PublicKey(mint);
       const mintInfo = await this.connection.getParsedAccountInfo(mintPk);
@@ -143,6 +145,9 @@ export class ScamFilter {
           mintAuthorityEnabled = data.mintAuthority !== null;
           freezeAuthorityEnabled = data.freezeAuthority !== null;
           authorityCheckSucceeded = true;
+          // Extract total supply for holder concentration check
+          tokenTotalSupply = parseFloat(data.supply ?? "0");
+          tokenDecimals = data.decimals ?? 0;
         }
       }
     } catch (err) {
@@ -174,16 +179,21 @@ export class ScamFilter {
       const accounts = largestAccounts.value;
 
       if (accounts.length > 0) {
-        // Sum of top 5 holders as percentage
-        const totalSupply = accounts.reduce(
-          (sum, a) => sum + (a.uiAmount ?? 0),
-          0
-        );
-        if (totalSupply > 0) {
+        // Use actual total supply from mint account (not sum of top-20 accounts,
+        // which would make concentration always ~100%)
+        const actualTotalSupplyUi = tokenDecimals > 0
+          ? tokenTotalSupply / Math.pow(10, tokenDecimals)
+          : tokenTotalSupply;
+        // Fallback to sum of returned accounts if we couldn't get total supply
+        const denominator = actualTotalSupplyUi > 0
+          ? actualTotalSupplyUi
+          : accounts.reduce((sum, a) => sum + (a.uiAmount ?? 0), 0);
+
+        if (denominator > 0) {
           const top5 = accounts
             .slice(0, 5)
             .reduce((sum, a) => sum + (a.uiAmount ?? 0), 0);
-          topHolderConcentration = (top5 / totalSupply) * 100;
+          topHolderConcentration = (top5 / denominator) * 100;
         }
       }
     } catch (err) {

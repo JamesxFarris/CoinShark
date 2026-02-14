@@ -63,6 +63,7 @@ export type SignalType =
   | "momentum"
   | "trend"
   | "bonding_curve"
+  | "bonding_curve_velocity"
   | "holder_velocity"
   | "coordinated_sell"
   | "creator_sell"

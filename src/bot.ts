@@ -42,7 +42,7 @@ export class CoinSharkBot {
   private pendingBuys: Set<string> = new Set(); // prevents concurrent buy evaluations
   private boughtTokens: Set<string> = new Set(); // never buy the same token twice per session
   private isRunning = false;
-  private autoTradingEnabled = true;
+  private autoTradingEnabled = false; // starts OFF — user must enable via Telegram
   private stats = {
     tokensScanned: 0,
     tokensRejected: 0,

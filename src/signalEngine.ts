@@ -429,14 +429,14 @@ export class SignalEngine {
       });
     }
 
-    // === Bonding curve velocity signal ===
+    // === Bonding curve velocity signal (separate type to avoid double-weighting) ===
     if (state.bondingCurveSnapshotTime > state.createdAt) {
       const bcVelocity = state.bondingCurvePercent - state.previousBondingCurvePercent;
       if (bcVelocity > 5) {
         // Curve filled 5%+ in the last minute = high demand
         const strength = Math.min(100, bcVelocity * 10);
         signals.push({
-          type: "bonding_curve",
+          type: "bonding_curve_velocity",
           mint,
           strength,
           details: `Curve velocity: +${bcVelocity.toFixed(1)}%/min (rapid filling)`,
@@ -488,6 +488,9 @@ export class SignalEngine {
           break;
         case "bonding_curve":
           aggregateScore += signal.strength * 0.10;
+          break;
+        case "bonding_curve_velocity":
+          aggregateScore += signal.strength * 0.05; // lighter weight — supplements bonding_curve level
           break;
         case "holder_velocity":
           aggregateScore += signal.strength * 0.15;

@@ -180,6 +180,11 @@ export class RiskManager {
     const pos = this.positions.get(trade.mint);
     if (!pos) return;
 
+    // If a sell is already in progress for this token, skip entirely.
+    // This prevents TP/stop-loss/trailing-stop from firing 9+ concurrent
+    // sell requests when multiple trade updates arrive in rapid succession.
+    if (this.pendingSells.has(trade.mint)) return;
+
     // Update current state
     pos.currentMarketCapSol = trade.marketCapSol;
     if (pos.entryMarketCapSol > 0) {
@@ -273,13 +278,18 @@ export class RiskManager {
       log.trade(
         `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (recovering initial)`
       );
-      const result = await this.trader.sell(pos.mint, 50);
-      if (result.success) {
-        pos.takeProfitHits = 1;
-        pos.trailingStopActive = true;
-        pos.solRecovered += pos.solInvested * 0.5;
-        pos.solInvested = pos.solInvested * 0.5; // half the position remains
-        log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
+      this.pendingSells.add(pos.mint);
+      try {
+        const result = await this.trader.sell(pos.mint, 50);
+        if (result.success) {
+          pos.takeProfitHits = 1;
+          pos.trailingStopActive = true;
+          pos.solRecovered += pos.solInvested * 0.5;
+          pos.solInvested = pos.solInvested * 0.5; // half the position remains
+          log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
+        }
+      } finally {
+        this.pendingSells.delete(pos.mint);
       }
       return;
     }
@@ -292,11 +302,16 @@ export class RiskManager {
       log.trade(
         `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% of remaining`
       );
-      const result = await this.trader.sell(pos.mint, 50);
-      if (result.success) {
-        pos.takeProfitHits = 2;
-        pos.solRecovered += pos.solInvested * 0.5;
-        pos.solInvested = pos.solInvested * 0.5;
+      this.pendingSells.add(pos.mint);
+      try {
+        const result = await this.trader.sell(pos.mint, 50);
+        if (result.success) {
+          pos.takeProfitHits = 2;
+          pos.solRecovered += pos.solInvested * 0.5;
+          pos.solInvested = pos.solInvested * 0.5;
+        }
+      } finally {
+        this.pendingSells.delete(pos.mint);
       }
       return;
     }
@@ -312,18 +327,23 @@ export class RiskManager {
       log.trade(
         `TAKE PROFIT 3 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling ${sellPercent}%, keeping ${moonbag}% moonbag`
       );
-      const result = await this.trader.sell(pos.mint, sellPercent);
-      if (result.success) {
-        pos.takeProfitHits = 3;
-        pos.isMoonbag = true;
-        // Record partial close
-        this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
-        if (this.onPositionClose) {
-          this.onPositionClose(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
+      this.pendingSells.add(pos.mint);
+      try {
+        const result = await this.trader.sell(pos.mint, sellPercent);
+        if (result.success) {
+          pos.takeProfitHits = 3;
+          pos.isMoonbag = true;
+          // Record partial close
+          this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
+          if (this.onPositionClose) {
+            this.onPositionClose(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
+          }
+          pos.solRecovered += pos.solInvested * (sellPercent / 100);
+          pos.solInvested = pos.solInvested * (moonbag / 100);
+          log.trade(`${pos.symbol} is now a moonbag (${moonbag}% remaining). Moonbag trailing stop: ${this.config.moonbagTrailingStopPercent}%`);
         }
-        pos.solRecovered += pos.solInvested * (sellPercent / 100);
-        pos.solInvested = pos.solInvested * (moonbag / 100);
-        log.trade(`${pos.symbol} is now a moonbag (${moonbag}% remaining). Moonbag trailing stop: ${this.config.moonbagTrailingStopPercent}%`);
+      } finally {
+        this.pendingSells.delete(pos.mint);
       }
       return;
     }
