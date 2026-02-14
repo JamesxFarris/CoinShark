@@ -91,6 +91,9 @@ export class CoinSharkBot {
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
     log.info(`Daily loss limit: ${this.config.dailyLossLimitSol} SOL`);
     log.info(`Bonding curve range: ${this.config.minBondingCurvePercent}-${this.config.maxBondingCurvePercent}%`);
+    if (this.config.dryRun) {
+      log.warn("DRY RUN MODE — no real trades will be executed");
+    }
 
     const kolCount = this.kolDiscovery.getAllKols().length;
     if (kolCount > 0) {
@@ -619,6 +622,7 @@ export class CoinSharkBot {
       },
       getStats: () => this.tradeHistory.formatStats(),
       getRecentTrades: () => this.tradeHistory.formatRecentTrades(),
+      getSignalAnalytics: () => this.tradeHistory.formatSignalAnalytics(),
       isRunning: () => this.autoTradingEnabled,
 
       pauseTrading: () => {

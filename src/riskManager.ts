@@ -14,11 +14,11 @@ export type PositionCloseCallback = (
 
 /**
  * RiskManager handles:
- * - Position tracking
- * - Signal-based position sizing (scale bets by signal strength)
+ * - Position tracking with real token balance verification
+ * - Fee accounting (priority fees counted per trade)
  * - Breakeven stop (never lose money after a big run-up)
  * - Trailing stop (lock in gains after TP1)
- * - Take-profit ladder: TP1 sell 50%, TP2 sell 50%, TP3 sell 50%, keep moonbag
+ * - Take-profit ladder: TP1 sell 50%, TP2 sell 25%, TP3 sell to moonbag
  * - Stop-loss execution
  * - Time-based exits (sell stale positions)
  * - Daily loss limits (stop trading after hitting limit)
@@ -66,6 +66,8 @@ export class RiskManager {
       if (!fs.existsSync(this.positionsFile)) return;
       const data = JSON.parse(fs.readFileSync(this.positionsFile, "utf-8"));
       for (const [mint, pos] of data) {
+        // Backwards compat: add feesAccruedSol if missing from old positions
+        if (pos.feesAccruedSol === undefined) pos.feesAccruedSol = 0;
         this.positions.set(mint, pos);
       }
       if (this.positions.size > 0) {
@@ -127,6 +129,21 @@ export class RiskManager {
   }
 
   /**
+   * Fetch actual token balance from chain after a trade.
+   * Non-blocking: returns 0 if fetch fails (position still opens with estimated values).
+   */
+  private async fetchTokenBalance(mint: string): Promise<number> {
+    try {
+      const wallet = this.trader.getWallet();
+      const balance = await wallet.getTokenBalance(mint);
+      return balance;
+    } catch (e: any) {
+      log.debug(`Failed to fetch token balance for ${mint}: ${e.message}`);
+      return 0;
+    }
+  }
+
+  /**
    * Open a new position with signal-based sizing
    */
   async openPosition(
@@ -163,6 +180,9 @@ export class RiskManager {
       return false;
     }
 
+    // Track priority fee for this buy
+    const buyFee = this.config.priorityFeeSol;
+
     const position: Position = {
       mint,
       symbol,
@@ -171,6 +191,7 @@ export class RiskManager {
       tokenAmount: 0,
       solInvested: amountSol,
       solRecovered: 0,
+      feesAccruedSol: buyFee,
       entryTime: Date.now(),
       currentMarketCapSol: marketCapSol,
       currentPnlPercent: 0,
@@ -194,8 +215,22 @@ export class RiskManager {
     );
 
     log.trade(
-      `Position opened: ${symbol} @ ${marketCapSol.toFixed(2)} SOL mcap | ${amountSol} SOL | tx: ${result.signature}`
+      `Position opened: ${symbol} @ ${marketCapSol.toFixed(2)} SOL mcap | ${amountSol} SOL (fee: ${buyFee}) | tx: ${result.signature}`
     );
+
+    // Async: fetch actual token balance after buy confirms (non-blocking)
+    this.fetchTokenBalance(mint).then((tokenBalance) => {
+      const pos = this.positions.get(mint);
+      if (pos && tokenBalance > 0) {
+        pos.tokenAmount = tokenBalance;
+        pos.entryPriceSol = amountSol / tokenBalance;
+        log.info(`${symbol}: Verified token balance: ${tokenBalance.toFixed(2)} tokens (entry price: ${pos.entryPriceSol.toExponential(3)} SOL/token)`);
+        this.savePositions();
+      } else if (pos && tokenBalance === 0 && !this.config.dryRun) {
+        log.warn(`${symbol}: Token balance is 0 after buy — tx may have failed on-chain`);
+      }
+    });
+
     return true;
   }
 
@@ -311,13 +346,13 @@ export class RiskManager {
 
     // === 6. Take Profit Ladder ===
 
-    // TP1: sell 50% at 2x → recover full initial, remaining 50% rides as house money
+    // TP1: sell 50% at +75% (1.75x) → recover most of initial, remaining 50% rides as house money
     if (
       pos.takeProfitHits === 0 &&
       pos.currentPnlPercent >= this.config.takeProfit1Percent
     ) {
       log.trade(
-        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (initial recovered, rest is house money)`
+        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (taking initial off table, rest rides free)`
       );
       this.pendingSells.add(pos.mint);
       try {
@@ -325,9 +360,13 @@ export class RiskManager {
         if (result.success) {
           pos.takeProfitHits = 1;
           pos.trailingStopActive = true;
+          pos.feesAccruedSol += this.config.priorityFeeSol;
           pos.solRecovered += pos.solInvested * 0.5;
           pos.solInvested = pos.solInvested * 0.5;
           log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
+
+          // Verify remaining token balance after partial sell
+          this.verifyBalanceAfterSell(pos);
         }
       } finally {
         this.pendingSells.delete(pos.mint);
@@ -348,8 +387,11 @@ export class RiskManager {
         const result = await this.trader.sell(pos.mint, 25);
         if (result.success) {
           pos.takeProfitHits = 2;
+          pos.feesAccruedSol += this.config.priorityFeeSol;
           pos.solRecovered += pos.solInvested * 0.25;
           pos.solInvested = pos.solInvested * 0.75;
+
+          this.verifyBalanceAfterSell(pos);
         }
       } finally {
         this.pendingSells.delete(pos.mint);
@@ -374,6 +416,7 @@ export class RiskManager {
         if (result.success) {
           pos.takeProfitHits = 3;
           pos.isMoonbag = true;
+          pos.feesAccruedSol += this.config.priorityFeeSol;
           // Record partial close
           this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, "take_profit_3_moonbag", result.signature);
           if (this.onPositionClose) {
@@ -382,6 +425,8 @@ export class RiskManager {
           pos.solRecovered += pos.solInvested * (sellPercent / 100);
           pos.solInvested = pos.solInvested * (moonbag / 100);
           log.trade(`${pos.symbol} is now a moonbag (${moonbag}% remaining). Moonbag trailing stop: ${this.config.moonbagTrailingStopPercent}%`);
+
+          this.verifyBalanceAfterSell(pos);
         }
       } finally {
         this.pendingSells.delete(pos.mint);
@@ -400,6 +445,30 @@ export class RiskManager {
         `BREAKEVEN STOP activated for ${pos.symbol}: PnL hit +${pos.currentPnlPercent.toFixed(1)}% — stop moved to +5%`
       );
     }
+  }
+
+  /**
+   * Verify remaining token balance after a partial sell (non-blocking).
+   * Logs warnings if balance doesn't match expectations.
+   */
+  private verifyBalanceAfterSell(pos: Position): void {
+    if (this.config.dryRun) return;
+
+    // Delay 3s to let the tx settle on-chain
+    setTimeout(async () => {
+      try {
+        const balance = await this.fetchTokenBalance(pos.mint);
+        if (balance > 0) {
+          pos.tokenAmount = balance;
+          log.info(`${pos.symbol}: Verified post-sell balance: ${balance.toFixed(2)} tokens`);
+          this.savePositions();
+        } else if (balance === 0 && pos.takeProfitHits < 3 && !pos.isMoonbag) {
+          log.warn(`${pos.symbol}: Token balance is 0 after partial sell — full position may have been sold`);
+        }
+      } catch (e: any) {
+        log.debug(`${pos.symbol}: Balance check failed: ${e.message}`);
+      }
+    }, 3000);
   }
 
   /**
@@ -452,8 +521,14 @@ export class RiskManager {
     try {
       const result = await this.trader.sell(mint, percent);
       if (result.success) {
+        // Track sell fee
+        pos.feesAccruedSol += this.config.priorityFeeSol;
+
+        const netPnlStr = pos.feesAccruedSol > 0
+          ? ` | Fees: ${pos.feesAccruedSol.toFixed(4)} SOL`
+          : "";
         log.trade(
-          `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | Recovered: ${pos.solRecovered.toFixed(4)} SOL | tx: ${result.signature}`
+          `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | Recovered: ${pos.solRecovered.toFixed(4)} SOL${netPnlStr} | tx: ${result.signature}`
         );
 
         if (percent >= 100) {
@@ -509,10 +584,12 @@ export class RiskManager {
       if (pos.trailingStopActive) flags.push("TRAILING");
       if (pos.breakevenStopActive) flags.push("BE-STOP");
       const flagStr = flags.length > 0 ? ` [${flags.join(",")}]` : "";
+      const feeStr = pos.feesAccruedSol > 0 ? ` | Fees: ${pos.feesAccruedSol.toFixed(4)}` : "";
+      const tokenStr = pos.tokenAmount > 0 ? ` | Tokens: ${pos.tokenAmount.toFixed(0)}` : "";
       log.info(
         `  ${pos.symbol} | ${pnlColor}${pos.currentPnlPercent.toFixed(1)}% | ` +
         `MCap: ${pos.currentMarketCapSol.toFixed(1)} SOL | ` +
-        `Invested: ${pos.solInvested.toFixed(4)} SOL | Recovered: ${pos.solRecovered.toFixed(4)} SOL | ` +
+        `Invested: ${pos.solInvested.toFixed(4)} SOL | Recovered: ${pos.solRecovered.toFixed(4)} SOL${feeStr}${tokenStr} | ` +
         `Age: ${age}m | TP: ${pos.takeProfitHits}/3 | HWM: +${pos.highWaterMarkPnl.toFixed(1)}%${flagStr}`
       );
     }

@@ -35,10 +35,12 @@ async function main() {
     log.debug("Debug logging enabled");
   }
 
-  // Dry run mode (no actual trades)
-  const dryRun = process.argv.includes("--dry-run");
-  if (dryRun) {
-    log.warn("DRY RUN MODE — no real trades will be executed");
+  // Dry run mode (no actual trades) — can be set via CLI flag or env var
+  if (process.argv.includes("--dry-run")) {
+    config.dryRun = true;
+  }
+  if (config.dryRun) {
+    log.warn("DRY RUN MODE — no real trades will be executed, simulating all buys/sells");
   }
 
   // Create and start the bot

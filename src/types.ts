@@ -128,6 +128,7 @@ export interface Position {
   tokenAmount: number;
   solInvested: number;
   solRecovered: number; // SOL recovered from partial sells
+  feesAccruedSol: number; // total priority fees + estimated slippage cost
   entryTime: number;
   currentMarketCapSol: number;
   currentPnlPercent: number;
@@ -239,6 +240,9 @@ export interface BotConfig {
   // Telegram
   telegramBotToken: string;
   telegramChatId: string;
+
+  // Dry Run
+  dryRun: boolean;
 }
 
 // === WebSocket Messages ===

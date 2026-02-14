@@ -31,7 +31,7 @@ export function loadConfig(): BotConfig {
     slippagePercent: envNum("SLIPPAGE_PERCENT", 25),
     priorityFeeSol: envNum("PRIORITY_FEE_SOL", 0.003),
 
-    takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 100), // 2x — sell 25%, activate trailing
+    takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 75), // 1.75x — sell 50%, recover initial + activate trailing
     takeProfit2Percent: envNum("TAKE_PROFIT_2_PERCENT", 300), // 4x — sell 25% more
     takeProfit3Percent: envNum("TAKE_PROFIT_3_PERCENT", 900),
     stopLossPercent: envNum("STOP_LOSS_PERCENT", 50),
@@ -68,5 +68,8 @@ export function loadConfig(): BotConfig {
     // Telegram
     telegramBotToken: envStr("TELEGRAM_BOT_TOKEN"),
     telegramChatId: envStr("TELEGRAM_CHAT_ID"),
+
+    // Dry Run
+    dryRun: envBool("DRY_RUN", false),
   };
 }

@@ -19,6 +19,7 @@ export interface TelegramBotCallbacks {
   discoverGmgnKols: () => Promise<{ added: number; skipped: number; failed: number; wallets: Array<{ address: string; alias: string; winRate: number; pnl7d: number }> }>;
   getStats: () => string;
   getRecentTrades: () => string;
+  getSignalAnalytics: () => string;
   isRunning: () => boolean;
   pauseTrading: () => void;
   resumeTrading: () => void;
@@ -163,6 +164,9 @@ export class TelegramUI {
           { text: "\ud83c\udfc6 Stats", callback_data: "stats" },
           { text: "\ud83d\udcdc History", callback_data: "history" },
           { text: "\ud83d\udc51 KOLs", callback_data: "kols" },
+        ],
+        [
+          { text: "\ud83d\udce1 Signals", callback_data: "signals" },
         ],
         [
           { text: "\u2699\ufe0f Settings", callback_data: "config" },
@@ -449,6 +453,19 @@ export class TelegramUI {
           return;
         }
 
+        // Signal Analytics
+        if (data === "signals") {
+          const analytics = this.callbacks.getSignalAnalytics();
+          await this.bot.editMessageText(`<b>Signal Analytics</b>\n\n<pre>${analytics}</pre>`, {
+            chat_id: chatId,
+            message_id: msgId,
+            parse_mode: "HTML",
+            reply_markup: this.backToMenuKeyboard(),
+          });
+          await this.bot.answerCallbackQuery(query.id);
+          return;
+        }
+
         // History
         if (data === "history") {
           const history = this.callbacks.getRecentTrades();
@@ -623,6 +640,7 @@ export class TelegramUI {
       { command: "addkol", description: "Add KOL: /addkol <wallet> [alias]" },
       { command: "removekol", description: "Remove KOL: /removekol <wallet>" },
       { command: "stats", description: "Win rate, PnL, trade stats" },
+      { command: "signals", description: "PnL breakdown by signal type" },
       { command: "history", description: "Recent trade history" },
       { command: "pause", description: "Pause auto-trading" },
       { command: "resume", description: "Resume auto-trading" },
@@ -816,6 +834,16 @@ export class TelegramUI {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const stats = this.callbacks.getStats();
       this.bot.sendMessage(msg.chat.id, `<b>Trading Stats</b>\n\n${stats}`, {
+        parse_mode: "HTML",
+        reply_markup: this.backToMenuKeyboard(),
+      });
+    });
+
+    // /signals - signal type PnL analytics
+    this.bot.onText(/\/signals/, (msg) => {
+      if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
+      const analytics = this.callbacks.getSignalAnalytics();
+      this.bot.sendMessage(msg.chat.id, `<b>Signal Analytics</b>\n\n<pre>${analytics}</pre>`, {
         parse_mode: "HTML",
         reply_markup: this.backToMenuKeyboard(),
       });

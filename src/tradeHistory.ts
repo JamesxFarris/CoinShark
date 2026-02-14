@@ -223,6 +223,59 @@ export class TradeHistory {
   }
 
   /**
+   * Get PnL breakdown by signal type.
+   * Shows which signals are making money and which are losing.
+   */
+  getSignalAnalytics(): Map<string, { trades: number; wins: number; totalPnlSol: number; avgPnlPercent: number }> {
+    const closedTrades = this.trades.filter(t => t.action === "sell" && t.pnlPercent !== undefined && t.triggerSignals);
+    const analytics = new Map<string, { trades: number; wins: number; totalPnlSol: number; totalPnlPercent: number }>();
+
+    for (const trade of closedTrades) {
+      for (const signal of trade.triggerSignals!) {
+        const existing = analytics.get(signal) ?? { trades: 0, wins: 0, totalPnlSol: 0, totalPnlPercent: 0 };
+        existing.trades++;
+        if (trade.pnlPercent! > 0) existing.wins++;
+        existing.totalPnlSol += trade.pnlSol ?? 0;
+        existing.totalPnlPercent += trade.pnlPercent ?? 0;
+        analytics.set(signal, existing);
+      }
+    }
+
+    // Convert totalPnlPercent to avgPnlPercent
+    const result = new Map<string, { trades: number; wins: number; totalPnlSol: number; avgPnlPercent: number }>();
+    for (const [signal, data] of analytics) {
+      result.set(signal, {
+        trades: data.trades,
+        wins: data.wins,
+        totalPnlSol: data.totalPnlSol,
+        avgPnlPercent: data.trades > 0 ? data.totalPnlPercent / data.trades : 0,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Format signal analytics for display (sorted by total PnL)
+   */
+  formatSignalAnalytics(): string {
+    const analytics = this.getSignalAnalytics();
+    if (analytics.size === 0) return "No signal data yet.";
+
+    const sorted = Array.from(analytics.entries())
+      .sort((a, b) => b[1].totalPnlSol - a[1].totalPnlSol);
+
+    const lines = sorted.map(([signal, data]) => {
+      const winRate = data.trades > 0 ? ((data.wins / data.trades) * 100).toFixed(0) : "0";
+      const pnlSign = data.totalPnlSol >= 0 ? "+" : "";
+      const avgSign = data.avgPnlPercent >= 0 ? "+" : "";
+      return `${signal}: ${data.trades} trades | WR: ${winRate}% (${data.wins}W/${data.trades - data.wins}L) | PnL: ${pnlSign}${data.totalPnlSol.toFixed(4)} SOL | Avg: ${avgSign}${data.avgPnlPercent.toFixed(1)}%`;
+    });
+
+    return lines.join("\n");
+  }
+
+  /**
    * Format recent trades for display
    */
   formatRecentTrades(count: number = 5): string {

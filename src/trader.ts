@@ -7,6 +7,8 @@ const PUMPPORTAL_LOCAL_API = "https://pumpportal.fun/api/trade-local";
 /**
  * Trader handles executing buy/sell orders via PumpPortal's local transaction API.
  * Uses local signing (your private key never leaves your machine).
+ *
+ * Supports dry-run mode: logs simulated trades without touching the chain.
  */
 export class Trader {
   private config: BotConfig;
@@ -18,10 +20,21 @@ export class Trader {
   }
 
   /**
+   * Get the wallet manager (for balance checks after trades)
+   */
+  getWallet(): WalletManager {
+    return this.wallet;
+  }
+
+  /**
    * Execute a buy order
    */
   async buy(mint: string, amountSol: number): Promise<TradeResult> {
     log.trade(`BUY ${amountSol.toFixed(4)} SOL of ${mint.slice(0, 8)}...`);
+
+    if (this.config.dryRun) {
+      return this.simulateTrade("buy", mint, amountSol);
+    }
 
     return this.executeTrade({
       action: "buy",
@@ -38,6 +51,10 @@ export class Trader {
   async sell(mint: string, percent: number = 100): Promise<TradeResult> {
     log.trade(`SELL ${percent}% of ${mint.slice(0, 8)}...`);
 
+    if (this.config.dryRun) {
+      return this.simulateTrade("sell", mint, undefined, percent);
+    }
+
     return this.executeTrade({
       action: "sell",
       mint,
@@ -45,6 +62,28 @@ export class Trader {
       slippage: this.config.slippagePercent,
       priorityFee: this.config.priorityFeeSol,
     });
+  }
+
+  /**
+   * Simulate a trade for dry-run mode. Logs the action but doesn't touch the chain.
+   */
+  private simulateTrade(
+    action: "buy" | "sell",
+    mint: string,
+    amountSol?: number,
+    sellPercent?: number
+  ): TradeResult {
+    const simSig = `DRY_RUN_${Date.now()}_${mint.slice(0, 8)}`;
+    if (action === "buy") {
+      log.trade(`[DRY RUN] BUY simulated: ${amountSol?.toFixed(4)} SOL → ${mint.slice(0, 8)}... | sig: ${simSig}`);
+    } else {
+      log.trade(`[DRY RUN] SELL simulated: ${sellPercent}% of ${mint.slice(0, 8)}... | sig: ${simSig}`);
+    }
+    return {
+      success: true,
+      signature: simSig,
+      amountSol,
+    };
   }
 
   /**
