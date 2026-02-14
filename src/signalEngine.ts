@@ -490,18 +490,21 @@ export class SignalEngine {
     }
 
     // === Wash-trade / fake volume detection ===
-    // If a small number of wallets account for most of the volume, it's likely rug activity
+    // If a small number of NON-KOL wallets account for most of the volume, it's likely rug activity.
+    // Exclude KOL wallets — a KOL buying repeatedly is conviction, not wash trading.
     if (recentTrades.length >= 10) {
       const walletVolume = new Map<string, number>();
       for (const t of recentTrades) {
-        walletVolume.set(t.trader, (walletVolume.get(t.trader) ?? 0) + t.solAmount);
+        if (!this.kolDiscovery.isKol(t.trader)) {
+          walletVolume.set(t.trader, (walletVolume.get(t.trader) ?? 0) + t.solAmount);
+        }
       }
       // Sort by volume descending
       const sorted = Array.from(walletVolume.values()).sort((a, b) => b - a);
       const totalVol = sorted.reduce((s, v) => s + v, 0);
-      // If top 3 wallets account for >70% of volume, it's concentrated / wash trading
+      // If top 3 non-KOL wallets account for >70% of non-KOL volume, it's concentrated / wash trading
       const top3Vol = sorted.slice(0, 3).reduce((s, v) => s + v, 0);
-      if (totalVol > 0 && top3Vol / totalVol > 0.7) {
+      if (totalVol > 0 && top3Vol / totalVol > 0.7 && sorted.length >= 5) {
         // Penalize heavily — this is fake volume
         signals.push({
           type: "coordinated_sell",
