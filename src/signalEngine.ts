@@ -658,6 +658,19 @@ export class SignalEngine {
   }
 
   /**
+   * Check if KOLs have bought this token recently (within lastSeconds)
+   */
+  hasRecentKolBuys(mint: string, lastSeconds: number = 300): boolean {
+    const state = this.tokenStates.get(mint);
+    if (!state) return false;
+    const cutoff = Date.now() - lastSeconds * 1000;
+    // Check trades for recent KOL buys
+    return state.trades.some(
+      (t) => t.timestamp >= cutoff && t.action === "buy" && this.kolDiscovery.isKol(t.trader)
+    );
+  }
+
+  /**
    * Get all KOL wallet addresses being tracked
    */
   getKolWallets(): string[] {

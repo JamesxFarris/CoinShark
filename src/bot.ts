@@ -252,14 +252,17 @@ export class CoinSharkBot {
           await this.riskManager.closePosition(trade.mint, 100, signal.type);
           return;
         }
-        // Coordinated sell: only emergency exit if we're at a loss.
-        // When in profit, the trailing stop will protect us — don't panic-sell winners.
+        // Coordinated sell: only emergency exit if we're at a loss AND no KOLs bought recently.
+        // If KOLs are buying the dip, trust smart money over retail sell pressure.
         if (signal.type === "coordinated_sell" && signal.strength >= 95) {
           const pos = this.riskManager.getPosition(trade.mint);
-          if (pos && pos.currentPnlPercent <= 0) {
+          const recentKolBuys = this.signalEngine.hasRecentKolBuys(trade.mint, 300);
+          if (pos && pos.currentPnlPercent <= 0 && !recentKolBuys) {
             log.trade(`EMERGENCY: ${symbol} — ${signal.type} detected at ${pos.currentPnlPercent.toFixed(1)}% PnL — selling!`);
             await this.riskManager.closePosition(trade.mint, 100, signal.type);
             return;
+          } else if (recentKolBuys) {
+            log.trade(`HOLD: ${symbol} — ${signal.type} detected but KOLs bought recently — trusting smart money`);
           } else {
             log.trade(`WARNING: ${symbol} — ${signal.type} detected but in profit (+${pos?.currentPnlPercent.toFixed(1)}%) — trailing stop will protect`);
           }
