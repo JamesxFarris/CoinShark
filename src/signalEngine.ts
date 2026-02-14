@@ -553,7 +553,7 @@ export class SignalEngine {
           aggregateScore -= signal.strength * 0.15;
           break;
         case "creator_sell":
-          aggregateScore -= signal.strength * 0.20;
+          aggregateScore -= signal.strength * 0.12;
           break;
         default:
           break;
@@ -610,11 +610,11 @@ export class SignalEngine {
       return { shouldBuy: false, momentum, reason: "No signals detected" };
     }
 
-    if (momentum.aggregateScore < 50) {
+    if (momentum.aggregateScore < 45) {
       return {
         shouldBuy: false,
         momentum,
-        reason: `Score too low: ${momentum.aggregateScore}/100 (need 50+)`,
+        reason: `Score too low: ${momentum.aggregateScore}/100 (need 45+)`,
       };
     }
 
@@ -787,8 +787,8 @@ export class SignalEngine {
     const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
     if (!kol) return null;
 
-    // Only instant-follow KOLs with score >= 80 (proven winners)
-    if (kol.score < 80) return null;
+    // Instant-follow KOLs with score >= 60 (top-ranked wallets can trigger)
+    if (kol.score < 60) return null;
 
     // Must be a token we're watching
     const state = this.tokenStates.get(trade.mint);
