@@ -54,8 +54,8 @@ export function loadConfig(): BotConfig {
 
     min5mVolumeSol: envNum("MIN_5M_VOLUME_SOL", 5),
     min5mBuyers: envNum("MIN_5M_BUYERS", 10),
-    minMarketCapSol: envNum("MIN_MARKET_CAP_SOL", 80),
-    maxMarketCapSol: envNum("MAX_MARKET_CAP_SOL", 100),
+    minMarketCapSol: envNum("MIN_MARKET_CAP_SOL", 150),
+    maxMarketCapSol: envNum("MAX_MARKET_CAP_SOL", 300),
 
     // Bonding Curve
     minBondingCurvePercent: envNum("MIN_BONDING_CURVE_PERCENT", 5),
