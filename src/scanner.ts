@@ -25,6 +25,7 @@ export class TokenScanner extends EventEmitter {
   private subscribedTokens: Set<string> = new Set();
   private subscribedAccounts: Set<string> = new Set();
   private isConnected = false;
+  private recentSignatures: Set<string> = new Set(); // dedup overlapping subscriptions
 
   connect() {
     log.info("Connecting to PumpPortal WebSocket...");
@@ -125,6 +126,22 @@ export class TokenScanner extends EventEmitter {
   }
 
   private handleMessage(msg: any) {
+    // Deduplicate: when a KOL buys a watched token, PumpPortal sends the
+    // trade on BOTH the token and account channels. Skip duplicates by signature.
+    if (msg.signature && this.recentSignatures.has(msg.signature)) return;
+    if (msg.signature) {
+      this.recentSignatures.add(msg.signature);
+      // Cap the set size to prevent memory leak
+      if (this.recentSignatures.size > 5000) {
+        const iter = this.recentSignatures.values();
+        for (let i = 0; i < 2500; i++) iter.next();
+        // Keep only the last ~2500 entries
+        const keep = new Set<string>();
+        for (const sig of iter) keep.add(sig);
+        this.recentSignatures = keep;
+      }
+    }
+
     // New token creation event
     if (msg.mint && msg.initialBuy !== undefined && msg.name) {
       const token: PumpPortalNewToken = {

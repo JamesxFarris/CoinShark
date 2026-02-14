@@ -224,7 +224,8 @@ export class SignalEngine {
     }
 
     // === KOL buy signal (with performance-weighted strength) ===
-    if (trade.txType === "buy" && this.kolDiscovery.isKol(trade.traderPublicKey)) {
+    // Filter dust buys (<0.5 SOL) — these are often bait/spam, not real conviction
+    if (trade.txType === "buy" && trade.solAmount >= 0.5 && this.kolDiscovery.isKol(trade.traderPublicKey)) {
       state.kolBuys.add(trade.traderPublicKey);
       const kolWeight = this.kolDiscovery.getKolWeight(trade.traderPublicKey);
       const kol = this.kolDiscovery.getKol(trade.traderPublicKey);
@@ -468,6 +469,41 @@ export class SignalEngine {
             timestamp: now,
           });
         }
+      }
+    }
+
+    // === Creator sold penalty (must be in evaluateMomentum, not just processTrade) ===
+    if (state.creatorSold) {
+      signals.push({
+        type: "creator_sell",
+        mint,
+        strength: 90,
+        details: `Creator ${state.creator.slice(0, 8)}... sold`,
+        timestamp: now,
+      });
+    }
+
+    // === Wash-trade / fake volume detection ===
+    // If a small number of wallets account for most of the volume, it's likely rug activity
+    if (recentTrades.length >= 10) {
+      const walletVolume = new Map<string, number>();
+      for (const t of recentTrades) {
+        walletVolume.set(t.trader, (walletVolume.get(t.trader) ?? 0) + t.solAmount);
+      }
+      // Sort by volume descending
+      const sorted = Array.from(walletVolume.values()).sort((a, b) => b - a);
+      const totalVol = sorted.reduce((s, v) => s + v, 0);
+      // If top 3 wallets account for >70% of volume, it's concentrated / wash trading
+      const top3Vol = sorted.slice(0, 3).reduce((s, v) => s + v, 0);
+      if (totalVol > 0 && top3Vol / totalVol > 0.7) {
+        // Penalize heavily — this is fake volume
+        signals.push({
+          type: "coordinated_sell",
+          mint,
+          strength: 80,
+          details: `Wash-trade detected: top 3 wallets = ${((top3Vol / totalVol) * 100).toFixed(0)}% of volume`,
+          timestamp: now,
+        });
       }
     }
 
