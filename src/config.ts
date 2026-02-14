@@ -26,7 +26,7 @@ export function loadConfig(): BotConfig {
     privateKey: envStr("SOLANA_PRIVATE_KEY"),
     pumpPortalApiKey: envStr("PUMPPORTAL_API_KEY"),
 
-    maxBetSol: envNum("MAX_BET_SOL", 0.05),
+    maxBetSol: envNum("MAX_BET_SOL", 0.1),
     maxPositions: envNum("MAX_POSITIONS", 3),
     slippagePercent: envNum("SLIPPAGE_PERCENT", 25),
     priorityFeeSol: envNum("PRIORITY_FEE_SOL", 0.003),
