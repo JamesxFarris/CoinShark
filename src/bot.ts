@@ -245,10 +245,22 @@ export class CoinSharkBot {
     if (this.riskManager.hasPosition(trade.mint)) {
       // Check if creator sold or coordinated dump while we hold — emergency exit
       for (const signal of newSignals) {
-        if (signal.type === "creator_sell" || (signal.type === "coordinated_sell" && signal.strength >= 90)) {
-          log.trade(`EMERGENCY: ${symbol} — ${signal.type} detected while holding position!`);
+        if (signal.type === "creator_sell") {
+          log.trade(`EMERGENCY: ${symbol} — creator_sell detected while holding position!`);
           await this.riskManager.closePosition(trade.mint, 100, signal.type);
           return;
+        }
+        // Coordinated sell: only emergency exit if we're at a loss.
+        // When in profit, the trailing stop will protect us — don't panic-sell winners.
+        if (signal.type === "coordinated_sell" && signal.strength >= 95) {
+          const pos = this.riskManager.getPosition(trade.mint);
+          if (pos && pos.currentPnlPercent <= 0) {
+            log.trade(`EMERGENCY: ${symbol} — ${signal.type} detected at ${pos.currentPnlPercent.toFixed(1)}% PnL — selling!`);
+            await this.riskManager.closePosition(trade.mint, 100, signal.type);
+            return;
+          } else {
+            log.trade(`WARNING: ${symbol} — ${signal.type} detected but in profit (+${pos?.currentPnlPercent.toFixed(1)}%) — trailing stop will protect`);
+          }
         }
       }
       await this.riskManager.onTradeUpdate(trade);

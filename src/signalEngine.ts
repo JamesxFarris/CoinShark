@@ -277,12 +277,13 @@ export class SignalEngine {
       const uniqueRecentBuyers = new Set(recentBuys.map((t) => t.trader));
       const recentBuyVolume = recentBuys.reduce((s, t) => s + t.solAmount, 0);
 
-      // Require: 5+ unique sellers, sell volume > buy volume in same window,
-      // AND sellers outnumber buyers (true dump, not just normal two-sided trading)
+      // Require: 8+ unique sellers, sell volume > 2x buy volume,
+      // AND sellers clearly outnumber buyers by 3+.
+      // Previous thresholds (5 sellers, 1.5x) were too sensitive for active tokens.
       if (
-        uniqueRecentSellers.size >= 5 &&
-        recentSellVolume > recentBuyVolume * 1.5 &&
-        uniqueRecentSellers.size > uniqueRecentBuyers.size
+        uniqueRecentSellers.size >= 8 &&
+        recentSellVolume > recentBuyVolume * 2 &&
+        uniqueRecentSellers.size >= uniqueRecentBuyers.size + 3
       ) {
         const sellDominance = recentBuyVolume > 0 ? recentSellVolume / recentBuyVolume : 10;
         const strength = Math.min(100, Math.round(sellDominance * 20 + uniqueRecentSellers.size * 5));

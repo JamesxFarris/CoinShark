@@ -84,6 +84,10 @@ export class RiskManager {
     return this.positions.has(mint);
   }
 
+  getPosition(mint: string): Position | undefined {
+    return this.positions.get(mint);
+  }
+
   /**
    * Position size — always use the configured bet amount.
    * No more scaling down (was causing penny bets that waste gas).
