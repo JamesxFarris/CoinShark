@@ -37,7 +37,7 @@ export function loadConfig(): BotConfig {
     stopLossPercent: envNum("STOP_LOSS_PERCENT", 40),
     moonbagPercent: envNum("MOONBAG_PERCENT", 25),
     breakevenActivationPercent: envNum("BREAKEVEN_ACTIVATION_PERCENT", 50),
-    trailingStopPercent: envNum("TRAILING_STOP_PERCENT", 20),
+    trailingStopPercent: envNum("TRAILING_STOP_PERCENT", 25),
     moonbagTrailingStopPercent: envNum("MOONBAG_TRAILING_STOP_PERCENT", 50),
 
     maxTopHolderPercent: envNum("MAX_TOP_HOLDER_PERCENT", 50),

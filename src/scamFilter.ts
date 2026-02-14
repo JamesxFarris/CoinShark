@@ -17,6 +17,18 @@ interface TokenTradeHistory {
   creatorWallet: string;
   createdAt: number;
   initialBuyPercent: number;
+  uri: string; // metadata URI for social link verification
+}
+
+interface TokenMetadata {
+  name?: string;
+  symbol?: string;
+  description?: string;
+  image?: string;
+  twitter?: string;
+  telegram?: string;
+  website?: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -57,6 +69,7 @@ export class ScamFilter {
       creatorWallet: token.traderPublicKey,
       createdAt: Date.now(),
       initialBuyPercent,
+      uri: token.uri ?? "",
     });
 
     // Track how many tokens this creator has launched
@@ -250,26 +263,50 @@ export class ScamFilter {
       reasons.push(`Creator grabbed ${history.initialBuyPercent.toFixed(1)}% of supply at launch`);
     }
 
+    // === Check 10: Social media verification ===
+    // Tokens with zero social presence (no twitter/telegram/website) are
+    // much more likely to be throwaway rug pulls. Require at least 1 social link.
+    let hasSocials = false;
+    let socialCount = 0;
+    const metadata = await this.fetchMetadata(history.uri);
+    if (metadata) {
+      if (metadata.twitter && metadata.twitter.trim().length > 5) socialCount++;
+      if (metadata.telegram && metadata.telegram.trim().length > 5) socialCount++;
+      if (metadata.website && metadata.website.trim().length > 5) socialCount++;
+      hasSocials = socialCount > 0;
+      if (!hasSocials) {
+        reasons.push("No social links in metadata (no twitter/telegram/website)");
+      }
+    } else {
+      // Couldn't fetch metadata — treat as no socials (penalty but not hard block)
+      reasons.push("Could not fetch metadata URI — no social verification possible");
+    }
+
     // === Scoring ===
     const holderDistScore = Math.max(0, 100 - topHolderConcentration);
     const volumeScore = suspectedWashTrading ? 20 : bundledLaunch ? 30 : microBuySwarming ? 40 : 80;
     const creatorScore = creatorIsSerial ? 10 : 70;
 
+    // Social score: 0 socials = 0, 1 = 50, 2 = 80, 3 = 100
+    const socialScore = socialCount === 0 ? 0 : socialCount === 1 ? 50 : socialCount === 2 ? 80 : 100;
+
     // Penalties
     let overallSafety =
-      holderDistScore * 0.3 + volumeScore * 0.3 + creatorScore * 0.2;
+      holderDistScore * 0.25 + volumeScore * 0.25 + creatorScore * 0.2 + socialScore * 0.15;
     if (mintAuthorityEnabled) overallSafety -= 30;
     if (freezeAuthorityEnabled) overallSafety -= 20;
     if (lowUniqueHolders) overallSafety -= 15;
+    if (!hasSocials) overallSafety -= 10;
     overallSafety = Math.max(0, Math.min(100, overallSafety));
 
-    // Hard fail = only truly disqualifying issues (authority abuse, serial deployers)
+    // Hard fail = truly disqualifying issues (authority abuse, serial deployers, no socials)
     // Soft flags (wash trading, micro-buys, holder concentration) just lower the score
     // but don't outright block — active tokens naturally have two-sided activity.
     const hardFail =
       (mintAuthorityEnabled && this.config.requireMintRevoked) ||
       (freezeAuthorityEnabled && this.config.requireFreezeRevoked) ||
-      creatorIsSerial;
+      creatorIsSerial ||
+      !hasSocials; // No social links = hard block (throwaway rug pattern)
 
     // Filter out soft reasons that should not hard-block on their own.
     // Active tokens naturally have two-sided trading, concentrated early holders,
@@ -487,6 +524,42 @@ export class ScamFilter {
     }
 
     return null;
+  }
+
+  /**
+   * Fetch and parse a token's metadata URI (pump.fun JSON with social links).
+   * Returns null if fetch fails or JSON is invalid — caller handles the penalty.
+   */
+  private async fetchMetadata(uri: string): Promise<TokenMetadata | null> {
+    if (!uri || uri.trim() === "") return null;
+
+    try {
+      // Convert IPFS URIs to HTTP gateway
+      let fetchUrl = uri;
+      if (uri.startsWith("ipfs://")) {
+        fetchUrl = `https://ipfs.io/ipfs/${uri.slice(7)}`;
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000); // 5s timeout
+
+      const response = await fetch(fetchUrl, {
+        signal: controller.signal,
+        headers: { "Accept": "application/json" },
+      });
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        log.debug(`Metadata fetch failed for ${uri.slice(0, 60)}: HTTP ${response.status}`);
+        return null;
+      }
+
+      const json = await response.json() as TokenMetadata;
+      return json;
+    } catch (err: any) {
+      log.debug(`Metadata fetch error for ${uri.slice(0, 60)}: ${err.message ?? err}`);
+      return null;
+    }
   }
 
   /**
