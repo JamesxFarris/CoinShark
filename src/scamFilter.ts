@@ -184,8 +184,9 @@ export class ScamFilter {
       reasons.push(`Creator has launched ${count} tokens (serial deployer pattern)`);
     }
 
-    // === Check 4: Holder concentration ===
+    // === Check 4: Holder concentration + bundle uniformity ===
     let topHolderConcentration = 0;
+    let bundleUniformity = false;
     try {
       const mintPk = new PublicKey(mint);
       const largestAccounts = await this.connection.getTokenLargestAccounts(mintPk);
@@ -207,6 +208,34 @@ export class ScamFilter {
             .slice(0, 5)
             .reduce((sum, a) => sum + (a.uiAmount ?? 0), 0);
           topHolderConcentration = (top5 / denominator) * 100;
+
+          // === Bundle uniformity detection ===
+          // Classic bundle: many wallets hold nearly identical % of supply (e.g. 1.45-1.47%)
+          // Check if 5+ accounts hold within a tight band (±0.2% of each other)
+          const holdPcts = accounts
+            .map(a => ((a.uiAmount ?? 0) / denominator) * 100)
+            .filter(p => p >= 0.5 && p <= 5); // Only non-trivial, non-whale holdings
+          if (holdPcts.length >= 5) {
+            // Sort and look for clusters of similar percentages
+            holdPcts.sort((a, b) => a - b);
+            let maxCluster = 1;
+            let currentCluster = 1;
+            for (let i = 1; i < holdPcts.length; i++) {
+              if (holdPcts[i] - holdPcts[i - 1] <= 0.15) {
+                currentCluster++;
+                maxCluster = Math.max(maxCluster, currentCluster);
+              } else {
+                currentCluster = 1;
+              }
+            }
+            // 5+ wallets within 0.15% of each other = bundle
+            if (maxCluster >= 5) {
+              bundleUniformity = true;
+              reasons.push(
+                `Bundle detected: ${maxCluster} wallets hold ~${holdPcts[0].toFixed(2)}% each (uniform distribution)`
+              );
+            }
+          }
         }
       }
     } catch (err) {
@@ -299,13 +328,14 @@ export class ScamFilter {
     // No extra penalty — socialScore=0 already costs ~15 points from the weighted formula
     overallSafety = Math.max(0, Math.min(100, overallSafety));
 
-    // Hard fail = truly disqualifying issues (authority abuse, serial deployers)
+    // Hard fail = truly disqualifying issues (authority abuse, serial deployers, bundles)
     // Soft flags (wash trading, micro-buys, holder concentration, no socials) just lower the score
     // but don't outright block — many legit pump.fun meme coins launch without socials.
     const hardFail =
       (mintAuthorityEnabled && this.config.requireMintRevoked) ||
       (freezeAuthorityEnabled && this.config.requireFreezeRevoked) ||
-      creatorIsSerial;
+      creatorIsSerial ||
+      bundleUniformity;
 
     // Filter out soft reasons that should not hard-block on their own.
     // Active tokens naturally have two-sided trading, concentrated early holders,
