@@ -36,6 +36,7 @@ export class RiskManager {
   private trader: Trader;
   private tradeHistory: TradeHistory;
   private positions: Map<string, Position> = new Map();
+  private pendingSells: Set<string> = new Set(); // prevents concurrent sell attempts
   private dailyLossExceeded = false;
   onPositionClose: PositionCloseCallback | null = null;
 
@@ -119,6 +120,12 @@ export class RiskManager {
     const result = await this.trader.buy(mint, amountSol);
     if (!result.success) {
       log.error(`Failed to open position in ${symbol}: ${result.error}`);
+      return false;
+    }
+
+    // Re-check after async buy — another concurrent call might have opened a position
+    if (this.hasPosition(mint)) {
+      log.warn(`Position already opened for ${symbol} while buy was in flight — ignoring duplicate`);
       return false;
     }
 
@@ -373,30 +380,42 @@ export class RiskManager {
       return false;
     }
 
-    const result = await this.trader.sell(mint, percent);
-    if (result.success) {
-      log.trade(
-        `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | Recovered: ${pos.solRecovered.toFixed(4)} SOL | tx: ${result.signature}`
-      );
-
-      if (percent >= 100) {
-        // Record sell in trade history
-        this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, reason, result.signature);
-
-        // Notify callback (for Telegram alerts, KOL scoring)
-        if (this.onPositionClose) {
-          this.onPositionClose(pos, pos.currentMarketCapSol, reason, result.signature);
-        }
-
-        // Check daily loss limit
-        this.checkDailyLossLimit();
-
-        this.positions.delete(mint);
-      }
-      return true;
-    } else {
-      log.error(`Failed to close ${pos.symbol}: ${result.error}`);
+    // Prevent concurrent sell attempts on the same position — the old code
+    // would fire 30+ sell requests simultaneously, causing 429 rate limiting
+    if (this.pendingSells.has(mint)) {
+      log.debug(`Sell already in progress for ${pos.symbol}, skipping`);
       return false;
+    }
+    this.pendingSells.add(mint);
+
+    try {
+      const result = await this.trader.sell(mint, percent);
+      if (result.success) {
+        log.trade(
+          `Position closed (${reason}): ${pos.symbol} | PnL: ${pos.currentPnlPercent.toFixed(1)}% | Recovered: ${pos.solRecovered.toFixed(4)} SOL | tx: ${result.signature}`
+        );
+
+        if (percent >= 100) {
+          // Record sell in trade history
+          this.tradeHistory.recordSell(pos, pos.currentMarketCapSol, reason, result.signature);
+
+          // Notify callback (for Telegram alerts, KOL scoring)
+          if (this.onPositionClose) {
+            this.onPositionClose(pos, pos.currentMarketCapSol, reason, result.signature);
+          }
+
+          // Check daily loss limit
+          this.checkDailyLossLimit();
+
+          this.positions.delete(mint);
+        }
+        return true;
+      } else {
+        log.error(`Failed to close ${pos.symbol}: ${result.error}`);
+        return false;
+      }
+    } finally {
+      this.pendingSells.delete(mint);
     }
   }
 

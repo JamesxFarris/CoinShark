@@ -64,6 +64,13 @@ export class WalletManager {
       const status = await this.connection.getSignatureStatus(signature);
       if (status.value?.confirmationStatus === "confirmed" ||
           status.value?.confirmationStatus === "finalized") {
+        // CRITICAL: A transaction can be "confirmed" (included in a block) but still
+        // have an execution error (e.g. program reverted, insufficient funds).
+        // We MUST check err even for confirmed transactions.
+        if (status.value.err) {
+          log.error(`Transaction confirmed but FAILED on-chain: ${signature}`, status.value.err);
+          return false;
+        }
         return true;
       }
       if (status.value?.err) {
