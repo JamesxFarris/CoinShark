@@ -29,7 +29,7 @@ export function loadConfig(): BotConfig {
     maxBetSol: envNum("MAX_BET_SOL", 0.05),
     maxPositions: envNum("MAX_POSITIONS", 3),
     slippagePercent: envNum("SLIPPAGE_PERCENT", 25),
-    priorityFeeSol: envNum("PRIORITY_FEE_SOL", 0.001),
+    priorityFeeSol: envNum("PRIORITY_FEE_SOL", 0.003),
 
     takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 100),
     takeProfit2Percent: envNum("TAKE_PROFIT_2_PERCENT", 300),
@@ -37,7 +37,7 @@ export function loadConfig(): BotConfig {
     stopLossPercent: envNum("STOP_LOSS_PERCENT", 40),
     moonbagPercent: envNum("MOONBAG_PERCENT", 25),
     breakevenActivationPercent: envNum("BREAKEVEN_ACTIVATION_PERCENT", 50),
-    trailingStopPercent: envNum("TRAILING_STOP_PERCENT", 30),
+    trailingStopPercent: envNum("TRAILING_STOP_PERCENT", 20),
     moonbagTrailingStopPercent: envNum("MOONBAG_TRAILING_STOP_PERCENT", 50),
 
     maxTopHolderPercent: envNum("MAX_TOP_HOLDER_PERCENT", 50),
@@ -55,7 +55,7 @@ export function loadConfig(): BotConfig {
     min5mVolumeSol: envNum("MIN_5M_VOLUME_SOL", 5),
     min5mBuyers: envNum("MIN_5M_BUYERS", 10),
     minMarketCapSol: envNum("MIN_MARKET_CAP_SOL", 50),
-    maxMarketCapSol: envNum("MAX_MARKET_CAP_SOL", 150),
+    maxMarketCapSol: envNum("MAX_MARKET_CAP_SOL", 100),
 
     // Bonding Curve
     minBondingCurvePercent: envNum("MIN_BONDING_CURVE_PERCENT", 5),

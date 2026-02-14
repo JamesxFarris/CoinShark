@@ -286,6 +286,15 @@ export class CoinSharkBot {
         return;
       }
 
+      // Require minimum safety score — low safety (27-48) correlated with losses in audit
+      if (scamResult.scores.overallSafety < 40) {
+        log.scam(
+          `BLOCKED ${symbol}: safety score too low (${scamResult.scores.overallSafety}/100, need 40+)`
+        );
+        this.unwatchToken(trade.mint);
+        return;
+      }
+
       log.signal(
         `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
       );
