@@ -12,6 +12,13 @@ export type PositionCloseCallback = (
   signature?: string
 ) => void;
 
+export type PartialSellCallback = (
+  position: Position,
+  soldPercent: number,
+  reason: string,
+  signature?: string
+) => void;
+
 /**
  * RiskManager handles:
  * - Position tracking
@@ -42,6 +49,7 @@ export class RiskManager {
   private dailyLossExceeded = false;
   private positionsFile = path.join(process.cwd(), "data", "positions.json");
   onPositionClose: PositionCloseCallback | null = null;
+  onPartialSell: PartialSellCallback | null = null;
 
   constructor(config: BotConfig, trader: Trader, tradeHistory: TradeHistory) {
     this.config = config;
@@ -134,9 +142,10 @@ export class RiskManager {
     symbol: string,
     marketCapSol: number,
     signals: Signal[],
-    signalScore: number = 50
+    signalScore: number = 50,
+    bypassLimits: boolean = false
   ): Promise<boolean> {
-    if (!this.canOpenPosition()) {
+    if (!bypassLimits && !this.canOpenPosition()) {
       log.warn(
         `Cannot open position: ${this.dailyLossExceeded ? "daily loss limit" : "at max"} (${this.positions.size}/${this.config.maxPositions})`
       );
@@ -222,6 +231,15 @@ export class RiskManager {
 
     // Update current state
     pos.currentMarketCapSol = trade.marketCapSol;
+
+    // If entryMarketCapSol is 0 (manual buy with unknown market cap), latch
+    // the first observed trade's market cap as the entry baseline so PnL,
+    // stop-loss, and take-profit calculations can function.
+    if (pos.entryMarketCapSol === 0 && trade.marketCapSol > 0) {
+      pos.entryMarketCapSol = trade.marketCapSol;
+      log.info(`Latched entry market cap for ${pos.symbol}: ${trade.marketCapSol.toFixed(2)} SOL`);
+    }
+
     if (pos.entryMarketCapSol > 0) {
       pos.currentPnlPercent =
         ((trade.marketCapSol - pos.entryMarketCapSol) / pos.entryMarketCapSol) * 100;
@@ -327,6 +345,9 @@ export class RiskManager {
           pos.trailingStopActive = true;
           pos.solRecovered += pos.solInvested * 0.5;
           pos.solInvested = pos.solInvested * 0.5;
+          if (this.onPartialSell) {
+            this.onPartialSell(pos, 50, "take_profit_1", result.signature);
+          }
           log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
         }
       } finally {
@@ -350,6 +371,9 @@ export class RiskManager {
           pos.takeProfitHits = 2;
           pos.solRecovered += pos.solInvested * 0.25;
           pos.solInvested = pos.solInvested * 0.75;
+          if (this.onPartialSell) {
+            this.onPartialSell(pos, 25, "take_profit_2", result.signature);
+          }
         }
       } finally {
         this.pendingSells.delete(pos.mint);

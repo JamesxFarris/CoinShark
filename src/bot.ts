@@ -70,6 +70,10 @@ export class CoinSharkBot {
     this.riskManager.onPositionClose = (pos, exitMcap, reason, sig) =>
       this.onPositionClosed(pos, exitMcap, reason, sig);
 
+    // Wire up partial sell callback for TP1/TP2 Telegram alerts
+    this.riskManager.onPartialSell = (pos, soldPercent, reason, sig) =>
+      this.onPartialSell(pos, soldPercent, reason, sig);
+
     // Initialize Telegram if configured
     if (config.telegramBotToken && config.telegramChatId) {
       this.telegram = new TelegramUI(config.telegramBotToken, config.telegramChatId);
@@ -463,6 +467,22 @@ export class CoinSharkBot {
   }
 
   /**
+   * Called on TP1/TP2 partial sells — notify user but don't score KOLs yet
+   */
+  private async onPartialSell(
+    position: Position,
+    soldPercent: number,
+    reason: string,
+    _signature?: string
+  ) {
+    if (!this.telegram) return;
+    await this.telegram.alertPartialSell(
+      position.symbol, position.mint, position.currentPnlPercent,
+      soldPercent, reason
+    );
+  }
+
+  /**
    * Stop watching a token (scam or graduated)
    */
   private unwatchToken(mint: string) {
@@ -593,8 +613,11 @@ export class CoinSharkBot {
           details: "Manual buy via Telegram",
           timestamp: Date.now(),
         }];
+        // Use signal engine's last-seen market cap if available; otherwise 0
+        // and the risk manager will latch entry from the first trade update.
+        const marketCap = this.signalEngine.getMarketCap(mint);
         const opened = await this.riskManager.openPosition(
-          mint, symbol, 0, signals, 100
+          mint, symbol, marketCap, signals, 100, true
         );
         if (opened) {
           this.stats.tradesExecuted++;

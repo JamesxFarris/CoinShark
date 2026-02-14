@@ -35,6 +35,8 @@ export class TelegramUI {
   private chatId: string;
   private callbacks: TelegramBotCallbacks | null = null;
   private startTime = Date.now();
+  private solPriceUsd: number = 0;
+  private solPriceLastFetch: number = 0;
 
   constructor(token: string, chatId: string) {
     this.chatId = chatId;
@@ -61,6 +63,35 @@ export class TelegramUI {
   }
 
   /**
+   * Fetch SOL/USD price from Jupiter, cached for 60 seconds.
+   */
+  private async getSolPrice(): Promise<number> {
+    if (this.solPriceUsd > 0 && Date.now() - this.solPriceLastFetch < 60_000) {
+      return this.solPriceUsd;
+    }
+    try {
+      const res = await fetch("https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112");
+      const json = await res.json() as any;
+      const price = parseFloat(json?.data?.["So11111111111111111111111111111111111111112"]?.price ?? "0");
+      if (price > 0) {
+        this.solPriceUsd = price;
+        this.solPriceLastFetch = Date.now();
+      }
+    } catch {
+      // Keep stale price on failure
+    }
+    return this.solPriceUsd;
+  }
+
+  private formatUsdMarketCap(solAmount: number, solPrice: number): string {
+    if (solPrice <= 0) return `${solAmount.toFixed(1)} SOL`;
+    const usd = solAmount * solPrice;
+    if (usd >= 1_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`;
+    if (usd >= 1_000) return `$${(usd / 1_000).toFixed(1)}K`;
+    return `$${usd.toFixed(0)}`;
+  }
+
+  /**
    * Send a message to the configured chat
    */
   async send(text: string) {
@@ -75,11 +106,13 @@ export class TelegramUI {
    * Send trade alert with quick-sell button
    */
   async alertBuy(symbol: string, mint: string, solAmount: number, marketCapSol: number, signals: string[]) {
+    const solPrice = await this.getSolPrice();
+    const mcap = this.formatUsdMarketCap(marketCapSol, solPrice);
     const msg = [
       `\ud83d\udfe2 <b>BUY ${symbol}</b>`,
       `\ud83c\udfab Mint: <code>${mint.slice(0, 12)}...</code>`,
       `\ud83d\udcb5 Amount: ${solAmount} SOL`,
-      `\ud83d\udcca MCap: ${marketCapSol.toFixed(2)} SOL`,
+      `\ud83d\udcca MCap: ${mcap}`,
       `\u26a1 Signals: ${signals.join(", ")}`,
       ``,
       `\ud83d\udcc8 <a href="https://pump.fun/coin/${mint}">View Chart on Pump.fun</a>`,
@@ -93,6 +126,36 @@ export class TelegramUI {
             [{ text: "\ud83d\udcc8 Chart", url: `https://pump.fun/coin/${mint}` }],
             [
               { text: "\ud83d\udcb8 Sell Now", callback_data: `sell:${mint}` },
+              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+            ],
+          ],
+        },
+      });
+    } catch (err: any) {
+      log.warn(`Telegram send failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Send partial sell alert (TP1/TP2)
+   */
+  async alertPartialSell(symbol: string, mint: string, pnlPercent: number, soldPercent: number, reason: string) {
+    const label = reason === "take_profit_1"
+      ? "Initials taken! Sold 50% — rest is house money"
+      : `TP2 hit! Sold ${soldPercent}% of remaining`;
+    const msg = [
+      `\ud83d\udcb0 <b>${symbol}</b> — ${label}`,
+      `\ud83d\udfe2 PnL: <b>+${pnlPercent.toFixed(1)}%</b>`,
+    ].join("\n");
+    try {
+      await this.bot.sendMessage(this.chatId, msg, {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `\ud83d\udcc8 ${symbol} Chart`, url: `https://pump.fun/coin/${mint}` }],
+            [
+              { text: "\ud83d\udcb8 Sell Rest", callback_data: `sell:${mint}` },
               { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
             ],
           ],
@@ -303,15 +366,19 @@ export class TelegramUI {
     ].join("\n");
   }
 
-  private buildPositionsMessage(positions: Position[]): string {
+  private async buildPositionsMessage(positions: Position[]): Promise<string> {
     if (positions.length === 0) return "\ud83d\udcc2 No open positions.";
+    const solPrice = await this.getSolPrice();
     return positions.map(p => {
       const pnlEmoji = p.currentPnlPercent >= 0 ? "\ud83d\udfe2" : "\ud83d\udd34";
       const pnl = `${p.currentPnlPercent >= 0 ? "+" : ""}${p.currentPnlPercent.toFixed(1)}%`;
+      const pnlSol = p.solInvested * (p.currentPnlPercent / 100);
+      const pnlSign = pnlSol >= 0 ? "+" : "";
       const age = ((Date.now() - p.entryTime) / 1000 / 60).toFixed(1);
+      const mcap = this.formatUsdMarketCap(p.currentMarketCapSol, solPrice);
       return [
-        `${pnlEmoji} <b>${p.symbol}</b>  ${pnl}`,
-        `   \ud83d\udcca MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
+        `${pnlEmoji} <b>${p.symbol}</b>  ${pnl} (${pnlSign}${pnlSol.toFixed(4)} SOL)`,
+        `   \ud83d\udcca MCap: ${mcap}`,
         `   \ud83d\udcb5 Invested: ${p.solInvested} SOL`,
         `   \u23f1 Age: ${age}m  |  \ud83c\udfaf TP: ${p.takeProfitHits}/3`,
         `   \ud83d\udcc8 <a href="https://pump.fun/coin/${p.mint}">Chart</a>  |  <code>${p.mint}</code>`,
@@ -400,7 +467,7 @@ export class TelegramUI {
         // Positions
         if (data === "positions") {
           const positions = this.callbacks.getPositions();
-          const text = this.buildPositionsMessage(positions);
+          const text = await this.buildPositionsMessage(positions);
           await this.bot.editMessageText(text, {
             chat_id: chatId,
             message_id: msgId,
@@ -658,10 +725,10 @@ export class TelegramUI {
     });
 
     // /positions - with sell buttons per position
-    this.bot.onText(/\/positions/, (msg) => {
+    this.bot.onText(/\/positions/, async (msg) => {
       if (!this.isAuthorized(msg.chat.id) || !this.callbacks) return;
       const positions = this.callbacks.getPositions();
-      const text = this.buildPositionsMessage(positions);
+      const text = await this.buildPositionsMessage(positions);
       this.bot.sendMessage(msg.chat.id, text, {
         parse_mode: "HTML",
         reply_markup: this.positionsKeyboard(positions),
