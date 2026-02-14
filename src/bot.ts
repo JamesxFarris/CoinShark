@@ -151,10 +151,11 @@ export class CoinSharkBot {
 
     this.scanner.disconnect();
 
-    // Close all positions on shutdown
+    // Do NOT close positions on shutdown — redeployments would panic-sell everything.
+    // Tokens stay in the wallet. User can sell manually via Telegram /sell.
     if (this.riskManager.positionCount > 0) {
-      log.warn(`Closing ${this.riskManager.positionCount} open positions...`);
-      await this.riskManager.closeAll("shutdown");
+      log.warn(`${this.riskManager.positionCount} open position(s) will remain in wallet (not panic-selling on shutdown).`);
+      this.riskManager.printPositions();
     }
 
     this.printStats();
@@ -289,6 +290,11 @@ export class CoinSharkBot {
         `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
       );
 
+      // Mark as bought BEFORE attempting — a timed-out buy may still land on-chain
+      // (skipPreflight=true means tx is sent regardless). Better to miss a retry
+      // than to send 6 duplicate buy transactions.
+      this.boughtTokens.add(trade.mint);
+
       // Execute the trade (pass signal score for position sizing)
       const opened = await this.riskManager.openPosition(
         trade.mint,
@@ -300,7 +306,6 @@ export class CoinSharkBot {
 
       if (opened) {
         this.stats.tradesExecuted++;
-        this.boughtTokens.add(trade.mint); // never buy this token again
         // Send Telegram alert
         if (this.telegram) {
           await this.telegram.alertBuy(
