@@ -19,6 +19,7 @@ interface TokenTradeHistory {
   uniqueBuyers: Set<string>;
   uniqueSellers: Set<string>;
   creatorWallet: string;
+  bondingCurveKey: string; // bonding curve PDA — holds unsold tokens and IS the mint authority
   createdAt: number;
   initialBuyPercent: number;
   uri: string; // metadata URI for social link verification
@@ -105,6 +106,7 @@ export class ScamFilter {
       uniqueBuyers: new Set(),
       uniqueSellers: new Set(),
       creatorWallet: token.traderPublicKey,
+      bondingCurveKey: token.bondingCurveKey ?? "",
       createdAt: Date.now(),
       initialBuyPercent,
       uri: token.uri ?? "",
@@ -182,7 +184,10 @@ export class ScamFilter {
     }
 
     // === Check 2: Mint/Freeze authority ===
-    // Default to UNSAFE — if we can't check, assume the worst
+    // Default to UNSAFE — if we can't check, assume the worst.
+    // IMPORTANT: On pump.fun, the bonding curve PDA IS the mint authority until graduation.
+    // This is normal and safe — it's NOT a human wallet retaining mint control.
+    // We only flag mint authority as dangerous if it belongs to a non-curve address.
     let mintAuthorityEnabled = true;
     let freezeAuthorityEnabled = true;
     let authorityCheckSucceeded = false;
@@ -194,8 +199,19 @@ export class ScamFilter {
       if (mintInfo.value) {
         const data = (mintInfo.value.data as any)?.parsed?.info;
         if (data) {
-          mintAuthorityEnabled = data.mintAuthority !== null;
-          freezeAuthorityEnabled = data.freezeAuthority !== null;
+          const mintAuth: string | null = data.mintAuthority ?? null;
+          const freezeAuth: string | null = data.freezeAuthority ?? null;
+
+          // If mint authority is the bonding curve PDA, that's expected on pump.fun — treat as safe
+          if (mintAuth === null) {
+            mintAuthorityEnabled = false;
+          } else if (history.bondingCurveKey && mintAuth === history.bondingCurveKey) {
+            mintAuthorityEnabled = false; // bonding curve is the authority — normal for pump.fun
+          } else {
+            mintAuthorityEnabled = true; // unknown wallet holds mint authority — dangerous
+          }
+
+          freezeAuthorityEnabled = freezeAuth !== null;
           authorityCheckSucceeded = true;
           // Extract total supply for holder concentration check
           tokenTotalSupply = parseFloat(data.supply ?? "0");
@@ -224,12 +240,36 @@ export class ScamFilter {
     }
 
     // === Check 4: Holder concentration + bundle uniformity ===
+    // IMPORTANT: Exclude the bonding curve token account from holder concentration.
+    // On pump.fun, the bonding curve holds all unsold tokens — it's not a "holder"
+    // in the traditional sense and would inflate concentration to 80-95% for every token.
     let topHolderConcentration = 0;
     let bundleUniformity = false;
     try {
       const mintPk = new PublicKey(mint);
       const largestAccounts = await this.connection.getTokenLargestAccounts(mintPk);
-      const accounts = largestAccounts.value;
+
+      // Filter out the bonding curve's token account if we know the bonding curve key.
+      // The bonding curve PDA's associated token account holds unsold supply.
+      let bondingCurveTokenAccount: string | null = null;
+      if (history.bondingCurveKey) {
+        try {
+          const { getAssociatedTokenAddress } = await import("@solana/spl-token");
+          const bcPk = new PublicKey(history.bondingCurveKey);
+          const ata = await getAssociatedTokenAddress(mintPk, bcPk, true);
+          bondingCurveTokenAccount = ata.toBase58();
+        } catch {
+          // If we can't derive the ATA, fall back to filtering by key match
+        }
+      }
+
+      const accounts = largestAccounts.value.filter(a => {
+        // Remove the bonding curve's token account from the holder list
+        if (bondingCurveTokenAccount && a.address.toBase58() === bondingCurveTokenAccount) {
+          return false;
+        }
+        return true;
+      });
 
       if (accounts.length > 0) {
         // Use actual total supply from mint account (not sum of top-20 accounts,
@@ -358,9 +398,11 @@ export class ScamFilter {
     // Social score: 0 socials = 0, 1 = 50, 2 = 80, 3 = 100
     const socialScore = socialCount === 0 ? 0 : socialCount === 1 ? 50 : socialCount === 2 ? 80 : 100;
 
-    // Penalties
+    // Weighted safety score — weights must sum to 1.0 for a proper 0-100 scale.
+    // Previously summed to 0.85, capping the max at 85 and making the 60-threshold
+    // nearly impossible to reach for typical tokens.
     let overallSafety =
-      holderDistScore * 0.25 + volumeScore * 0.25 + creatorScore * 0.2 + socialScore * 0.15;
+      holderDistScore * 0.30 + volumeScore * 0.30 + creatorScore * 0.25 + socialScore * 0.15;
     if (mintAuthorityEnabled) overallSafety -= 30;
     if (freezeAuthorityEnabled) overallSafety -= 20;
     if (lowUniqueHolders) overallSafety -= 15;
@@ -385,6 +427,7 @@ export class ScamFilter {
       "Micro-buy swarming",
       "Creator grabbed",
       "unique buyers",
+      "Top 5 holders",
       "No social links",
       "Could not fetch metadata",
     ];
