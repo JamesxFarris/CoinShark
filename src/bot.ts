@@ -1,4 +1,4 @@
-import { BotConfig, PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration, Position, Signal } from "./types";
+import { BotConfig, PumpPortalNewToken, PumpPortalTrade, PumpPortalMigration, Position, Signal, SignalType } from "./types";
 import { WalletManager } from "./wallet";
 import { TokenScanner } from "./scanner";
 import { ScamFilter } from "./scamFilter";
@@ -85,7 +85,7 @@ export class CoinSharkBot {
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
     log.info(`Market cap range: ${this.config.minMarketCapSol}-${this.config.maxMarketCapSol} SOL`);
-    log.info(`Signal score threshold: 50 | Safety score threshold: 50`);
+    log.info(`Signal score threshold: 45 | Safety score threshold: 60`);
     log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | TP3: +${this.config.takeProfit3Percent}% | SL: -${this.config.stopLossPercent}%`);
     log.info(`Moonbag: ${this.config.moonbagPercent}% | Breakeven at: +${this.config.breakevenActivationPercent}% | Trailing: ${this.config.trailingStopPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
@@ -338,8 +338,14 @@ export class CoinSharkBot {
       return;
     }
 
+    // Lock this mint BEFORE shouldBuy evaluation to prevent concurrent evaluations.
+    // The previous code added to pendingBuys AFTER shouldBuy, leaving a window where
+    // multiple trade events could start parallel evaluations for the same token.
+    this.pendingBuys.add(trade.mint);
+
     const { shouldBuy: buy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
     if (!buy || !momentum) {
+      this.pendingBuys.delete(trade.mint);
       // Log rejections for tokens with some signal activity (score 30+) — throttled to once per 60s per token
       if (momentum && momentum.aggregateScore >= 30) {
         const now = Date.now();
@@ -352,8 +358,6 @@ export class CoinSharkBot {
       return;
     }
 
-    // Lock this mint to prevent concurrent evaluations
-    this.pendingBuys.add(trade.mint);
     try {
       // Run full scam analysis before committing real money
       log.info(`Evaluating ${symbol} for purchase...`);
@@ -581,11 +585,27 @@ export class CoinSharkBot {
       getWalletAddress: () => this.wallet.address,
 
       manualBuy: async (mint: string) => {
-        const result = await this.trader.buy(mint, this.config.maxBetSol);
-        if (result.success) {
+        const symbol = this.tokenSymbols.get(mint) || mint.slice(0, 8);
+        const signals: Signal[] = [{
+          type: "kol_buy" as SignalType,
+          mint,
+          strength: 100,
+          details: "Manual buy via Telegram",
+          timestamp: Date.now(),
+        }];
+        const opened = await this.riskManager.openPosition(
+          mint, symbol, 0, signals, 100
+        );
+        if (opened) {
           this.stats.tradesExecuted++;
+          this.boughtTokens.add(mint);
+          // Watch the token so TP/SL updates work
+          if (!this.watchedTokens.has(mint)) {
+            this.watchedTokens.add(mint);
+            this.scanner.watchToken(mint);
+          }
         }
-        return result;
+        return { success: opened, error: opened ? undefined : "Buy failed — check logs for details" };
       },
 
       manualSell: async (mint: string) => {
