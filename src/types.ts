@@ -152,6 +152,7 @@ export interface KolProfile {
   winRate: number; // 0-100
   score: number; // 0-100
   lastActive: number;
+  scamBuys: number; // tracks how many scam tokens this KOL bought into
 }
 
 // === Trade History ===

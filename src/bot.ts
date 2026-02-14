@@ -317,6 +317,12 @@ export class CoinSharkBot {
         log.scam(
           `BLOCKED ${symbol}: ${scamResult.reasons.join("; ")}`
         );
+        // Record scam buy for any KOLs that bought this token — auto-blacklist repeat offenders
+        const kolBuyers = this.signalEngine.getKolBuyers(trade.mint);
+        for (const kolAddr of kolBuyers) {
+          const blacklisted = this.kolDiscovery.recordScamBuy(kolAddr, symbol);
+          if (blacklisted) this.scanner.unwatchAccount(kolAddr);
+        }
         this.unwatchToken(trade.mint);
         return;
       }
@@ -326,6 +332,11 @@ export class CoinSharkBot {
         log.scam(
           `BLOCKED ${symbol}: safety score too low (${scamResult.scores.overallSafety}/100, need 50+)`
         );
+        const kolBuyers = this.signalEngine.getKolBuyers(trade.mint);
+        for (const kolAddr of kolBuyers) {
+          const blacklisted = this.kolDiscovery.recordScamBuy(kolAddr, symbol);
+          if (blacklisted) this.scanner.unwatchAccount(kolAddr);
+        }
         this.unwatchToken(trade.mint);
         return;
       }

@@ -695,6 +695,13 @@ export class SignalEngine {
   }
 
   /**
+   * Get the set of KOL wallets that bought a specific token
+   */
+  getKolBuyers(mint: string): Set<string> {
+    return this.tokenStates.get(mint)?.kolBuys ?? new Set();
+  }
+
+  /**
    * Get the bonding curve percent for a token
    */
   getBondingCurvePercent(mint: string): number {

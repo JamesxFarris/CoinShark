@@ -41,6 +41,8 @@ export class KolDiscovery {
       if (fs.existsSync(KOL_FILE)) {
         const data = JSON.parse(fs.readFileSync(KOL_FILE, "utf-8"));
         for (const kol of data) {
+          // Backwards compat: add scamBuys field if missing from old data
+          if (kol.scamBuys === undefined) kol.scamBuys = 0;
           this.kols.set(kol.address, kol);
         }
         log.info(`Loaded ${this.kols.size} KOL profiles from disk`);
@@ -74,6 +76,7 @@ export class KolDiscovery {
       winRate: 50, // neutral starting point
       score: 50,
       lastActive: 0,
+      scamBuys: 0,
     };
     this.kols.set(address, profile);
     this.save();
@@ -143,6 +146,27 @@ export class KolDiscovery {
     // Recalculate score: weighted blend of win rate, average PnL, and recency
     this.recalculateScore(kol);
     this.save();
+  }
+
+  /**
+   * Record that a KOL bought into a scam token. Auto-blacklist after 2+ scam buys.
+   */
+  recordScamBuy(address: string, tokenSymbol: string): boolean {
+    const kol = this.kols.get(address);
+    if (!kol) return false;
+
+    kol.scamBuys = (kol.scamBuys ?? 0) + 1;
+
+    if (kol.scamBuys >= 2) {
+      log.kol(`AUTO-BLACKLIST: ${kol.alias} (${address.slice(0, 8)}...) — ${kol.scamBuys} scam buys (latest: ${tokenSymbol})`);
+      this.kols.delete(address);
+      this.save();
+      return true; // was blacklisted
+    }
+
+    log.kol(`SCAM WARNING: ${kol.alias} (${address.slice(0, 8)}...) bought scam token ${tokenSymbol} (${kol.scamBuys}/2 strikes)`);
+    this.save();
+    return false;
   }
 
   private recalculateScore(kol: KolProfile) {
