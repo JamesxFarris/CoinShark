@@ -137,6 +137,36 @@ export class TelegramUI {
   }
 
   /**
+   * Send partial sell alert (TP1/TP2)
+   */
+  async alertPartialSell(symbol: string, mint: string, pnlPercent: number, soldPercent: number, reason: string) {
+    const label = reason === "take_profit_1"
+      ? "Initials taken! Sold 50% — rest is house money"
+      : `TP2 hit! Sold ${soldPercent}% of remaining`;
+    const msg = [
+      `\ud83d\udcb0 <b>${symbol}</b> — ${label}`,
+      `\ud83d\udfe2 PnL: <b>+${pnlPercent.toFixed(1)}%</b>`,
+    ].join("\n");
+    try {
+      await this.bot.sendMessage(this.chatId, msg, {
+        parse_mode: "HTML",
+        disable_web_page_preview: true,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: `\ud83d\udcc8 ${symbol} Chart`, url: `https://pump.fun/coin/${mint}` }],
+            [
+              { text: "\ud83d\udcb8 Sell Rest", callback_data: `sell:${mint}` },
+              { text: "\ud83d\udcc2 Positions", callback_data: "positions" },
+            ],
+          ],
+        },
+      });
+    } catch (err: any) {
+      log.warn(`Telegram send failed: ${err.message}`);
+    }
+  }
+
+  /**
    * Send sell alert
    */
   async alertSell(symbol: string, mint: string, pnlPercent: number, pnlSol: number, reason: string) {
