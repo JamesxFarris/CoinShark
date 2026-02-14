@@ -558,11 +558,11 @@ export class SignalEngine {
       return { shouldBuy: false, momentum, reason: "No signals detected" };
     }
 
-    if (momentum.aggregateScore < 50) {
+    if (momentum.aggregateScore < 55) {
       return {
         shouldBuy: false,
         momentum,
-        reason: `Score too low: ${momentum.aggregateScore}/100 (need 50+)`,
+        reason: `Score too low: ${momentum.aggregateScore}/100 (need 55+)`,
       };
     }
 
