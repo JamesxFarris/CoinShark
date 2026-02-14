@@ -25,7 +25,7 @@ export class KolDiscovery {
     // Add any wallets from config that aren't already tracked
     for (const wallet of initialWallets) {
       if (!this.kols.has(wallet)) {
-        this.addKol(wallet, "config");
+        this.addKol(wallet, wallet.slice(0, 6));
       }
     }
   }

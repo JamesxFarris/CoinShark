@@ -83,6 +83,8 @@ export class CoinSharkBot {
     await this.wallet.printStatus();
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
+    log.info(`Market cap range: ${this.config.minMarketCapSol}-${this.config.maxMarketCapSol} SOL`);
+    log.info(`Signal score threshold: 55 | Safety score threshold: 50`);
     log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | TP3: +${this.config.takeProfit3Percent}% | SL: -${this.config.stopLossPercent}%`);
     log.info(`Moonbag: ${this.config.moonbagPercent}% | Breakeven at: +${this.config.breakevenActivationPercent}% | Trailing: ${this.config.trailingStopPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
@@ -280,8 +282,14 @@ export class CoinSharkBot {
     if (this.pendingBuys.has(trade.mint)) return;
     if (this.riskManager.hasPosition(trade.mint)) return;
 
-    const { shouldBuy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
-    if (!shouldBuy || !momentum) return;
+    const { shouldBuy: buy, momentum, reason } = this.signalEngine.shouldBuy(trade.mint);
+    if (!buy || !momentum) {
+      // Log rejections for tokens with some signal activity (score 30+) so we can see near-misses
+      if (momentum && momentum.aggregateScore >= 30) {
+        log.signal(`SKIP ${symbol}: ${reason} (mcap: ${trade.marketCapSol.toFixed(0)} SOL, signals: ${momentum.signals.map(s => s.type).join(", ")})`);
+      }
+      return;
+    }
 
     // Lock this mint to prevent concurrent evaluations
     this.pendingBuys.add(trade.mint);
@@ -308,7 +316,7 @@ export class CoinSharkBot {
       }
 
       log.signal(
-        `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100`
+        `BUY SIGNAL for ${symbol}: ${reason} | Safety: ${scamResult.scores.overallSafety}/100 | MCap: ${trade.marketCapSol.toFixed(0)} SOL`
       );
 
       // Mark as bought BEFORE attempting — a timed-out buy may still land on-chain
@@ -408,6 +416,16 @@ export class CoinSharkBot {
       if (!this.isRunning) return;
       try { this.riskManager.checkDailyLossLimit(); } catch (e: any) { log.error(`checkDailyLossLimit error: ${e.message}`); }
     }, 60 * 1000);
+
+    // Print stats every 5 minutes
+    setInterval(async () => {
+      if (!this.isRunning) return;
+      try {
+        const balance = await this.wallet.getBalance();
+        const alphaCount = this.signalEngine.getAlphaWalletCount();
+        log.info(`--- Stats: Balance: ${balance.toFixed(4)} SOL | Watching: ${this.watchedTokens.size} tokens | Bought: ${this.boughtTokens.size} session | Alpha wallets: ${alphaCount} ---`);
+      } catch (e: any) { log.error(`Stats error: ${e.message}`); }
+    }, 5 * 60 * 1000);
 
     // Cleanup old data every 5 minutes (preserve state for tokens we hold positions in)
     setInterval(() => {
