@@ -663,10 +663,10 @@ export class SignalEngine {
   /**
    * Clean up old token states
    */
-  cleanup(maxAgeMs: number = 30 * 60 * 1000) {
+  cleanup(maxAgeMs: number = 30 * 60 * 1000, preserveMints?: Set<string>) {
     const now = Date.now();
     for (const [mint, state] of this.tokenStates) {
-      if (now - state.createdAt > maxAgeMs) {
+      if (now - state.createdAt > maxAgeMs && !preserveMints?.has(mint)) {
         this.tokenStates.delete(mint);
       }
     }

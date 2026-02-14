@@ -40,6 +40,7 @@ export class CoinSharkBot {
   private watchedTokens: Set<string> = new Set();
   private tokenSymbols: Map<string, string> = new Map();
   private pendingBuys: Set<string> = new Set(); // prevents concurrent buy evaluations
+  private boughtTokens: Set<string> = new Set(); // never buy the same token twice per session
   private isRunning = false;
   private autoTradingEnabled = true;
   private stats = {
@@ -241,6 +242,14 @@ export class CoinSharkBot {
     // ALWAYS update existing positions — stop-loss, trailing stop, rug detection
     // all work regardless of whether auto-trading is on or off.
     if (this.riskManager.hasPosition(trade.mint)) {
+      // Check if creator sold or coordinated dump while we hold — emergency exit
+      for (const signal of newSignals) {
+        if (signal.type === "creator_sell" || (signal.type === "coordinated_sell" && signal.strength >= 90)) {
+          log.trade(`EMERGENCY: ${symbol} — ${signal.type} detected while holding position!`);
+          await this.riskManager.closePosition(trade.mint, 100, signal.type);
+          return;
+        }
+      }
       await this.riskManager.onTradeUpdate(trade);
       return;
     }
@@ -250,6 +259,9 @@ export class CoinSharkBot {
 
     // Check if we should open a new position
     if (!this.riskManager.canOpenPosition()) return;
+
+    // Never buy the same token twice in a session
+    if (this.boughtTokens.has(trade.mint)) return;
 
     // Prevent concurrent buy evaluations for the same token (race condition guard)
     if (this.pendingBuys.has(trade.mint)) return;
@@ -288,6 +300,7 @@ export class CoinSharkBot {
 
       if (opened) {
         this.stats.tradesExecuted++;
+        this.boughtTokens.add(trade.mint); // never buy this token again
         // Send Telegram alert
         if (this.telegram) {
           await this.telegram.alertBuy(
@@ -359,22 +372,23 @@ export class CoinSharkBot {
     }, 2 * 60 * 1000);
 
     // Check time-based exits every minute
-    setInterval(() => {
+    setInterval(async () => {
       if (!this.isRunning) return;
-      this.riskManager.checkTimeExits();
+      try { await this.riskManager.checkTimeExits(); } catch (e: any) { log.error(`checkTimeExits error: ${e.message}`); }
     }, 60 * 1000);
 
     // Check daily loss limit every minute
     setInterval(() => {
       if (!this.isRunning) return;
-      this.riskManager.checkDailyLossLimit();
+      try { this.riskManager.checkDailyLossLimit(); } catch (e: any) { log.error(`checkDailyLossLimit error: ${e.message}`); }
     }, 60 * 1000);
 
-    // Cleanup old data every 5 minutes
+    // Cleanup old data every 5 minutes (preserve state for tokens we hold positions in)
     setInterval(() => {
       if (!this.isRunning) return;
-      this.scamFilter.cleanup();
-      this.signalEngine.cleanup();
+      const heldMints = new Set(this.riskManager.getPositions().map(p => p.mint));
+      this.scamFilter.cleanup(30 * 60 * 1000, heldMints);
+      this.signalEngine.cleanup(30 * 60 * 1000, heldMints);
 
       if (this.watchedTokens.size > 200) {
         log.info(`Pruning watched tokens (${this.watchedTokens.size} → keeping recent)`);
@@ -450,7 +464,7 @@ export class CoinSharkBot {
           return { success, error: success ? undefined : "Sell transaction failed — check logs for details" };
         }
         // Direct sell if no tracked position
-        const result = this.trader.sell(mint, 100);
+        const result = await this.trader.sell(mint, 100);
         return result;
       },
 

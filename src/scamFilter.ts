@@ -130,8 +130,10 @@ export class ScamFilter {
     }
 
     // === Check 2: Mint/Freeze authority ===
-    let mintAuthorityEnabled = false;
-    let freezeAuthorityEnabled = false;
+    // Default to UNSAFE — if we can't check, assume the worst
+    let mintAuthorityEnabled = true;
+    let freezeAuthorityEnabled = true;
+    let authorityCheckSucceeded = false;
     try {
       const mintPk = new PublicKey(mint);
       const mintInfo = await this.connection.getParsedAccountInfo(mintPk);
@@ -140,10 +142,14 @@ export class ScamFilter {
         if (data) {
           mintAuthorityEnabled = data.mintAuthority !== null;
           freezeAuthorityEnabled = data.freezeAuthority !== null;
+          authorityCheckSucceeded = true;
         }
       }
     } catch (err) {
-      log.debug(`Failed to fetch mint info for ${mint}: ${err}`);
+      log.warn(`Failed to fetch mint info for ${mint} — assuming unsafe: ${err}`);
+    }
+    if (!authorityCheckSucceeded) {
+      reasons.push("Could not verify mint/freeze authority (RPC failure)");
     }
 
     if (mintAuthorityEnabled && this.config.requireMintRevoked) {
@@ -476,10 +482,10 @@ export class ScamFilter {
   /**
    * Cleanup old token histories to free memory
    */
-  cleanup(maxAgeMs: number = 30 * 60 * 1000) {
+  cleanup(maxAgeMs: number = 30 * 60 * 1000, preserveMints?: Set<string>) {
     const now = Date.now();
     for (const [mint, history] of this.tokenHistories) {
-      if (now - history.createdAt > maxAgeMs) {
+      if (now - history.createdAt > maxAgeMs && !preserveMints?.has(mint)) {
         this.tokenHistories.delete(mint);
       }
     }

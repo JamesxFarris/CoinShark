@@ -84,29 +84,11 @@ export class RiskManager {
   }
 
   /**
-   * Calculate position size based on signal score.
-   * Higher confidence signals get larger bets.
-   *
-   *   Score 40-54  → 0.5x base bet (marginal signal)
-   *   Score 55-69  → 1.0x base bet (standard)
-   *   Score 70-84  → 1.5x base bet (strong signal)
-   *   Score 85+    → 2.0x base bet (very strong signal)
+   * Position size — always use the configured bet amount.
+   * No more scaling down (was causing penny bets that waste gas).
    */
-  calculatePositionSize(signalScore: number): number {
-    const base = this.config.maxBetSol;
-    let multiplier: number;
-
-    if (signalScore >= 85) {
-      multiplier = 2.0;
-    } else if (signalScore >= 70) {
-      multiplier = 1.5;
-    } else if (signalScore >= 55) {
-      multiplier = 1.0;
-    } else {
-      multiplier = 0.5;
-    }
-
-    return parseFloat((base * multiplier).toFixed(4));
+  calculatePositionSize(_signalScore: number): number {
+    return this.config.maxBetSol;
   }
 
   /**
@@ -250,8 +232,8 @@ export class RiskManager {
       return;
     }
 
-    // === 4b. Hard stop loss ===
-    if (!pos.breakevenStopActive && pos.currentPnlPercent <= -this.config.stopLossPercent) {
+    // === 4b. Hard stop loss — ALWAYS fires as a backstop regardless of other flags ===
+    if (pos.currentPnlPercent <= -this.config.stopLossPercent) {
       log.trade(
         `STOP LOSS for ${pos.symbol}: ${pos.currentPnlPercent.toFixed(1)}%`
       );
@@ -358,8 +340,11 @@ export class RiskManager {
   async checkTimeExits() {
     if (this.config.maxPositionAgeMinutes <= 0) return;
 
-    for (const pos of this.positions.values()) {
-      if (pos.isMoonbag) continue; // moonbags don't time-exit
+    // Snapshot keys to avoid mutation during iteration
+    const mints = Array.from(this.positions.keys());
+    for (const mint of mints) {
+      const pos = this.positions.get(mint);
+      if (!pos || pos.isMoonbag) continue; // moonbags don't time-exit
       const ageMinutes = (Date.now() - pos.entryTime) / 1000 / 60;
       if (
         ageMinutes >= this.config.maxPositionAgeMinutes &&

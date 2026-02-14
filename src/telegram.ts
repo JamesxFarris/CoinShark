@@ -313,7 +313,7 @@ export class TelegramUI {
         `${pnlEmoji} <b>${p.symbol}</b>  ${pnl}`,
         `   \ud83d\udcca MCap: ${p.currentMarketCapSol.toFixed(1)} SOL`,
         `   \ud83d\udcb5 Invested: ${p.solInvested} SOL`,
-        `   \u23f1 Age: ${age}m  |  \ud83c\udfaf TP: ${p.takeProfitHits}/2`,
+        `   \u23f1 Age: ${age}m  |  \ud83c\udfaf TP: ${p.takeProfitHits}/3`,
         `   \ud83d\udcc8 <a href="https://pump.fun/coin/${p.mint}">Chart</a>  |  <code>${p.mint}</code>`,
       ].join("\n");
     }).join("\n\n");
@@ -324,7 +324,7 @@ export class TelegramUI {
       `<b>\u2699\ufe0f Bot Settings</b>`,
       ``,
       `<b>\ud83d\udcb5 Trade Size</b>`,
-      `<b>${c.maxBetSol} SOL</b> per trade (auto-scales 0.5x\u20132x based on signal strength)`,
+      `<b>${c.maxBetSol} SOL</b> per trade`,
       `Up to <b>${c.maxPositions}</b> trades open at once`,
       ``,
       `<b>\ud83c\udfaf When to Take Profit</b>`,
