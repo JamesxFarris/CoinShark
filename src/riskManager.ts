@@ -203,10 +203,13 @@ export class RiskManager {
 
     // === 1. Moonbag trailing stop ===
     if (pos.isMoonbag) {
-      const dropFromHwm = pos.highWaterMarkPnl - pos.currentPnlPercent;
+      // Calculate actual price drop percentage from HWM (not PnL point difference)
+      const hwmMultiplier = 1 + pos.highWaterMarkPnl / 100;
+      const currentMultiplier = 1 + pos.currentPnlPercent / 100;
+      const dropFromHwm = (1 - currentMultiplier / hwmMultiplier) * 100;
       if (dropFromHwm >= this.config.moonbagTrailingStopPercent) {
         log.trade(
-          `MOONBAG TRAILING STOP for ${pos.symbol}: dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
+          `MOONBAG TRAILING STOP for ${pos.symbol}: price dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
         );
         await this.closePosition(pos.mint, 100, "moonbag_trailing_stop");
         return;
@@ -217,10 +220,13 @@ export class RiskManager {
 
     // === 2. Trailing stop (after TP1) ===
     if (pos.trailingStopActive) {
-      const dropFromHwm = pos.highWaterMarkPnl - pos.currentPnlPercent;
+      // Calculate actual price drop percentage from HWM (not PnL point difference)
+      const hwmMultiplier = 1 + pos.highWaterMarkPnl / 100;
+      const currentMultiplier = 1 + pos.currentPnlPercent / 100;
+      const dropFromHwm = (1 - currentMultiplier / hwmMultiplier) * 100;
       if (dropFromHwm >= this.config.trailingStopPercent) {
         log.trade(
-          `TRAILING STOP for ${pos.symbol}: dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
+          `TRAILING STOP for ${pos.symbol}: price dropped ${dropFromHwm.toFixed(1)}% from peak (HWM: +${pos.highWaterMarkPnl.toFixed(1)}%, now: +${pos.currentPnlPercent.toFixed(1)}%)`
         );
         await this.closePosition(pos.mint, 100, "trailing_stop");
         return;
