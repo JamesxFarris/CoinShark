@@ -727,6 +727,10 @@ export class SignalEngine {
     return this.tokenStates.get(mint)?.bondingCurvePercent ?? 0;
   }
 
+  getMarketCap(mint: string): number {
+    return this.tokenStates.get(mint)?.currentMarketCapSol ?? 0;
+  }
+
   /**
    * Check if KOLs have bought this token recently (within lastSeconds)
    */

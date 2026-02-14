@@ -593,8 +593,11 @@ export class CoinSharkBot {
           details: "Manual buy via Telegram",
           timestamp: Date.now(),
         }];
+        // Use signal engine's last-seen market cap if available; otherwise 0
+        // and the risk manager will latch entry from the first trade update.
+        const marketCap = this.signalEngine.getMarketCap(mint);
         const opened = await this.riskManager.openPosition(
-          mint, symbol, 0, signals, 100
+          mint, symbol, marketCap, signals, 100
         );
         if (opened) {
           this.stats.tradesExecuted++;

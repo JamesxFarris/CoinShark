@@ -222,6 +222,15 @@ export class RiskManager {
 
     // Update current state
     pos.currentMarketCapSol = trade.marketCapSol;
+
+    // If entryMarketCapSol is 0 (manual buy with unknown market cap), latch
+    // the first observed trade's market cap as the entry baseline so PnL,
+    // stop-loss, and take-profit calculations can function.
+    if (pos.entryMarketCapSol === 0 && trade.marketCapSol > 0) {
+      pos.entryMarketCapSol = trade.marketCapSol;
+      log.info(`Latched entry market cap for ${pos.symbol}: ${trade.marketCapSol.toFixed(2)} SOL`);
+    }
+
     if (pos.entryMarketCapSol > 0) {
       pos.currentPnlPercent =
         ((trade.marketCapSol - pos.entryMarketCapSol) / pos.entryMarketCapSol) * 100;
