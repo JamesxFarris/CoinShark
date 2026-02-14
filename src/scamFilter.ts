@@ -296,17 +296,16 @@ export class ScamFilter {
     if (mintAuthorityEnabled) overallSafety -= 30;
     if (freezeAuthorityEnabled) overallSafety -= 20;
     if (lowUniqueHolders) overallSafety -= 15;
-    if (!hasSocials) overallSafety -= 10;
+    // No extra penalty — socialScore=0 already costs ~15 points from the weighted formula
     overallSafety = Math.max(0, Math.min(100, overallSafety));
 
-    // Hard fail = truly disqualifying issues (authority abuse, serial deployers, no socials)
-    // Soft flags (wash trading, micro-buys, holder concentration) just lower the score
-    // but don't outright block — active tokens naturally have two-sided activity.
+    // Hard fail = truly disqualifying issues (authority abuse, serial deployers)
+    // Soft flags (wash trading, micro-buys, holder concentration, no socials) just lower the score
+    // but don't outright block — many legit pump.fun meme coins launch without socials.
     const hardFail =
       (mintAuthorityEnabled && this.config.requireMintRevoked) ||
       (freezeAuthorityEnabled && this.config.requireFreezeRevoked) ||
-      creatorIsSerial ||
-      !hasSocials; // No social links = hard block (throwaway rug pattern)
+      creatorIsSerial;
 
     // Filter out soft reasons that should not hard-block on their own.
     // Active tokens naturally have two-sided trading, concentrated early holders,
@@ -317,6 +316,8 @@ export class ScamFilter {
       "Micro-buy swarming",
       "Creator grabbed",
       "unique buyers",
+      "No social links",
+      "Could not fetch metadata",
     ];
     const hardReasons = reasons.filter(r => !softPatterns.some(p => r.includes(p)));
     const passed = !hardFail && hardReasons.length === 0;

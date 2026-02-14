@@ -443,6 +443,12 @@ export class CoinSharkBot {
       this.scamFilter.cleanup(30 * 60 * 1000, heldMints);
       this.signalEngine.cleanup(30 * 60 * 1000, heldMints);
 
+      // Clean old skip log throttle entries
+      const skipCutoff = Date.now() - 5 * 60 * 1000;
+      for (const [mint, time] of this.skipLogTimes) {
+        if (time < skipCutoff) this.skipLogTimes.delete(mint);
+      }
+
       if (this.watchedTokens.size > 200) {
         log.info(`Pruning watched tokens (${this.watchedTokens.size} → keeping recent)`);
         const toRemove = Array.from(this.watchedTokens).slice(
@@ -466,30 +472,38 @@ export class CoinSharkBot {
     // GMGN auto-discovery every 6 hours
     setInterval(async () => {
       if (!this.isRunning) return;
-      const result = await this.gmgnDiscovery.autoDiscover();
-      if (result && result.added > 0) {
-        log.kol(`GMGN auto-discovery: added ${result.added} new wallets`);
-        // Subscribe to new KOL wallets
-        for (const w of result.wallets) {
-          this.scanner.watchAccount(w.address);
+      try {
+        const result = await this.gmgnDiscovery.autoDiscover();
+        if (result && result.added > 0) {
+          log.kol(`GMGN auto-discovery: added ${result.added} new wallets`);
+          // Subscribe to new KOL wallets
+          for (const w of result.wallets) {
+            this.scanner.watchAccount(w.address);
+          }
+          if (this.telegram) {
+            await this.telegram.send(GmgnDiscovery.formatResult(result));
+          }
         }
-        if (this.telegram) {
-          await this.telegram.send(GmgnDiscovery.formatResult(result));
-        }
+      } catch (e: any) {
+        log.error(`GMGN auto-discovery error: ${e.message}`);
       }
     }, 6 * 60 * 60 * 1000);
 
     // Run initial GMGN discovery 30s after startup
     setTimeout(async () => {
       if (!this.isRunning) return;
-      const result = await this.gmgnDiscovery.autoDiscover();
-      if (result && result.added > 0) {
-        for (const w of result.wallets) {
-          this.scanner.watchAccount(w.address);
+      try {
+        const result = await this.gmgnDiscovery.autoDiscover();
+        if (result && result.added > 0) {
+          for (const w of result.wallets) {
+            this.scanner.watchAccount(w.address);
+          }
+          if (this.telegram) {
+            await this.telegram.send(GmgnDiscovery.formatResult(result));
+          }
         }
-        if (this.telegram) {
-          await this.telegram.send(GmgnDiscovery.formatResult(result));
-        }
+      } catch (e: any) {
+        log.error(`GMGN initial discovery error: ${e.message}`);
       }
     }, 30_000);
   }
