@@ -310,8 +310,8 @@ export class CoinSharkBot {
           this.unwatchToken(trade.mint);
           return;
         }
-        if (scamResult.scores.overallSafety < 50) {
-          log.scam(`BLOCKED instant follow ${symbol}: safety ${scamResult.scores.overallSafety}/100`);
+        if (scamResult.scores.overallSafety < 60) {
+          log.scam(`BLOCKED instant follow ${symbol}: safety ${scamResult.scores.overallSafety}/100 (need 60+)`);
           this.unwatchToken(trade.mint);
           return;
         }
@@ -374,9 +374,9 @@ export class CoinSharkBot {
       }
 
       // Require minimum safety score — low safety (27-48) correlated with losses in audit
-      if (scamResult.scores.overallSafety < 50) {
+      if (scamResult.scores.overallSafety < 60) {
         log.scam(
-          `BLOCKED ${symbol}: safety score too low (${scamResult.scores.overallSafety}/100, need 50+)`
+          `BLOCKED ${symbol}: safety score too low (${scamResult.scores.overallSafety}/100, need 60+)`
         );
         const kolBuyers = this.signalEngine.getKolBuyers(trade.mint);
         for (const kolAddr of kolBuyers) {
