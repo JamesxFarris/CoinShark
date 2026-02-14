@@ -280,22 +280,22 @@ export class RiskManager {
 
     // === 6. Take Profit Ladder ===
 
-    // TP1: sell 50% → recover initial, activate trailing stop
+    // TP1: sell 25% at 2x → secure some profit, activate trailing stop, let 75% ride
     if (
       pos.takeProfitHits === 0 &&
       pos.currentPnlPercent >= this.config.takeProfit1Percent
     ) {
       log.trade(
-        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% (recovering initial)`
+        `TAKE PROFIT 1 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 25% (securing profit, 75% rides)`
       );
       this.pendingSells.add(pos.mint);
       try {
-        const result = await this.trader.sell(pos.mint, 50);
+        const result = await this.trader.sell(pos.mint, 25);
         if (result.success) {
           pos.takeProfitHits = 1;
           pos.trailingStopActive = true;
-          pos.solRecovered += pos.solInvested * 0.5;
-          pos.solInvested = pos.solInvested * 0.5; // half the position remains
+          pos.solRecovered += pos.solInvested * 0.25;
+          pos.solInvested = pos.solInvested * 0.75;
           log.trade(`Trailing stop activated for ${pos.symbol} at ${this.config.trailingStopPercent}% below HWM`);
         }
       } finally {
@@ -304,21 +304,21 @@ export class RiskManager {
       return;
     }
 
-    // TP2: sell 50% of remaining
+    // TP2: sell 25% of remaining
     if (
       pos.takeProfitHits === 1 &&
       pos.currentPnlPercent >= this.config.takeProfit2Percent
     ) {
       log.trade(
-        `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 50% of remaining`
+        `TAKE PROFIT 2 for ${pos.symbol}: +${pos.currentPnlPercent.toFixed(1)}% — selling 25% of remaining`
       );
       this.pendingSells.add(pos.mint);
       try {
-        const result = await this.trader.sell(pos.mint, 50);
+        const result = await this.trader.sell(pos.mint, 25);
         if (result.success) {
           pos.takeProfitHits = 2;
-          pos.solRecovered += pos.solInvested * 0.5;
-          pos.solInvested = pos.solInvested * 0.5;
+          pos.solRecovered += pos.solInvested * 0.25;
+          pos.solInvested = pos.solInvested * 0.75;
         }
       } finally {
         this.pendingSells.delete(pos.mint);

@@ -31,8 +31,8 @@ export function loadConfig(): BotConfig {
     slippagePercent: envNum("SLIPPAGE_PERCENT", 25),
     priorityFeeSol: envNum("PRIORITY_FEE_SOL", 0.003),
 
-    takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 100),
-    takeProfit2Percent: envNum("TAKE_PROFIT_2_PERCENT", 300),
+    takeProfit1Percent: envNum("TAKE_PROFIT_1_PERCENT", 100), // 2x — sell 25%, activate trailing
+    takeProfit2Percent: envNum("TAKE_PROFIT_2_PERCENT", 300), // 4x — sell 25% more
     takeProfit3Percent: envNum("TAKE_PROFIT_3_PERCENT", 900),
     stopLossPercent: envNum("STOP_LOSS_PERCENT", 40),
     moonbagPercent: envNum("MOONBAG_PERCENT", 25),
