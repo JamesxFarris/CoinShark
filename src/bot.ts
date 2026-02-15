@@ -89,7 +89,7 @@ export class CoinSharkBot {
     log.info(`Max bet: ${this.config.maxBetSol} SOL`);
     log.info(`Max positions: ${this.config.maxPositions}`);
     log.info(`Market cap range: ${this.config.minMarketCapSol}-${this.config.maxMarketCapSol} SOL`);
-    log.info(`Signal score threshold: 45 | Safety score threshold: 60`);
+    log.info(`Signal score threshold: 45 | Safety score threshold: 50`);
     log.info(`TP1: +${this.config.takeProfit1Percent}% | TP2: +${this.config.takeProfit2Percent}% | TP3: +${this.config.takeProfit3Percent}% | SL: -${this.config.stopLossPercent}%`);
     log.info(`Moonbag: ${this.config.moonbagPercent}% | Breakeven at: +${this.config.breakevenActivationPercent}% | Trailing: ${this.config.trailingStopPercent}%`);
     log.info(`Max position age: ${this.config.maxPositionAgeMinutes} min`);
@@ -314,8 +314,8 @@ export class CoinSharkBot {
           this.unwatchToken(trade.mint);
           return;
         }
-        if (scamResult.scores.overallSafety < 60) {
-          log.scam(`BLOCKED instant follow ${symbol}: safety ${scamResult.scores.overallSafety}/100 (need 60+)`);
+        if (scamResult.scores.overallSafety < 50) {
+          log.scam(`BLOCKED instant follow ${symbol}: safety ${scamResult.scores.overallSafety}/100 (need 50+)`);
           this.unwatchToken(trade.mint);
           return;
         }

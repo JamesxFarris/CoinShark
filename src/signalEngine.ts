@@ -610,16 +610,6 @@ export class SignalEngine {
       return { shouldBuy: false, momentum, reason: "No signals detected" };
     }
 
-    // Require at least 1 KOL buy — raw momentum without smart money is too easily faked
-    const hasKolBuy = momentum.signals.some((s) => s.type === "kol_buy");
-    if (!hasKolBuy) {
-      return {
-        shouldBuy: false,
-        momentum,
-        reason: `No KOL buy signal (score: ${momentum.aggregateScore})`,
-      };
-    }
-
     if (momentum.aggregateScore < 45) {
       return {
         shouldBuy: false,
